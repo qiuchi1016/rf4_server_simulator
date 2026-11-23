@@ -45,6 +45,29 @@ func TestSonarRollContextUsesBiteContextState(t *testing.T) {
 	}
 }
 
+func TestSonarGuideSpotRequiresBaitLanding(t *testing.T) {
+	srv, _ := newRigTestServer(t)
+	sess, _ := newTunnelProbe(t, srv)
+	st := srv.stateFor(sess.Userid)
+	for _, tc := range []struct {
+		name string
+		cast bool
+		want int
+	}{{"only player position", false, 0}, {"cast at same position", true, 120}} {
+		t.Run(tc.name, func(t *testing.T) {
+			st.mu.Lock()
+			st.HasPos, st.PosX, st.PosZ = true, 4258, 6
+			st.HasCastPos, st.CastPosX, st.CastPosZ = tc.cast, 4258, 6
+			st.mu.Unlock()
+			c := sonarRollContext(srv, sess, "level_012_north_sea", time.Now())
+			srv.prepareFishRollRuntime(t.Context(), &c, "")
+			if !c.hasPos || c.runtime.zone != 170 || c.runtime.guideSpot != tc.want {
+				t.Fatalf("位置可用=%t，声呐网格=%d，攻略标深=%d，期望标深=%d", c.hasPos, c.runtime.zone, c.runtime.guideSpot, tc.want)
+			}
+		})
+	}
+}
+
 func TestDynamicProtocolHandlersShapeAndEcho(t *testing.T) {
 	t.Parallel()
 	srv, _ := newRigTestServer(t)

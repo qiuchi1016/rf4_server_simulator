@@ -691,6 +691,7 @@ func sonarRollContext(srv *Server, sess *Session, key string, now time.Time) fis
 			c.x, c.z, c.hasPos = st.CastPosX, st.CastPosZ, true
 		} else if st.HasPos {
 			c.x, c.z, c.hasPos = st.PosX, st.PosZ, true
+			c.playerPosOnly = true
 		}
 		c.onBoat, c.boatKnown = st.onBoatLocked(now.Unix())
 		gearGUID := st.GearGuid

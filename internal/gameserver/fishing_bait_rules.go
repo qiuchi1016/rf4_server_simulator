@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,9 +24,11 @@ type fishBaitRule struct {
 	// “在海图上，区域不限”），以及顺水漂流、jig 阶梯、饵在水中运动三个动作要求。
 	chartZones []int
 	chartAny   bool
-	needDrift  bool
-	needJig    bool
-	needMotion bool
+	// 未指定纸图标深的后台覆盖沿用声呐区号。
+	sonarZoneCondition bool
+	needDrift          bool
+	needJig            bool
+	needMotion         bool
 	// needBoat 表示攻略要求“使用有效船票并已上船”。
 	needBoat bool
 	// jigOrMotion 用于“出现 jig 阶梯，或采用路亚钓法且已上船、饵在水中运动”
@@ -165,14 +168,20 @@ type BaitRuleInfo struct {
 	Condition  string   `json:"condition"`
 }
 
-// ExportedBaitRules 按中文鱼名查规则表，供管理后台只读展示。
+const guideSoundingQualifier = "（纸图标深）"
+
+// ExportedBaitRules 按中文鱼名查内置规则，供管理后台展示与编辑。
 // 返回 ok=false 表示该鱼在规则表里没有条目（严格模式下只能靠饵效证据放行）。
 func ExportedBaitRules(fishZh string) (BaitRuleInfo, bool) {
 	r, ok := lookupFishBaitRule(fishZh)
 	if !ok {
 		return BaitRuleInfo{}, false
 	}
-	return BaitRuleInfo{Allow: r.allow, Deny: r.deny, BottomOnly: r.bottomOnly, Condition: r.condition}, true
+	condition := r.condition
+	if len(r.chartZones) > 0 {
+		condition += guideSoundingQualifier
+	}
+	return BaitRuleInfo{Allow: r.allow, Deny: r.deny, BottomOnly: r.bottomOnly, Condition: condition}, true
 }
 
 // BaitOutcome 是后台「实际能不能咬」的判定结果，四档与运行时判鱼一一对应。
@@ -716,7 +725,7 @@ func (s *Server) filterFishBaitSet(loc string, ids []string, keys []string, weig
 }
 
 // fishChartCondition 解析攻略里的海图前置条件：“海图120号区域”给出区号列表，
-// “海图，区域不限”只要求当前在海图上。区号数字与客户端水域 systemID 编号同源。
+// “海图，区域不限”只要求当前在海图上。区号的含义由规则来源决定。
 func fishChartCondition(condition string) ([]int, bool) {
 	if !strings.Contains(condition, "海图") {
 		return nil, false
@@ -744,24 +753,16 @@ func fishChartCondition(condition string) ([]int, bool) {
 // 定位的抛竿落点，拟饵动作条件要有钓组动作上报。天然饵不套用“使用拟饵时”的
 // 动作和船条件；拿不到证据时保持中性，避免把没有对应上报的钓法一律判成不合格。
 func ruleConditionAllows(r fishBaitRule, c fishRollContext) bool {
-	if r.chartAny || len(r.chartZones) > 0 {
-		if c.runtime == nil {
-			return true
-		}
+	if c.runtime != nil && (r.chartAny || len(r.chartZones) > 0) {
 		if !c.runtime.chartKnown {
 			return false
 		}
-		if len(r.chartZones) > 0 && c.runtime.zoneKnown {
-			inside := false
-			for _, zone := range r.chartZones {
-				if zone == c.runtime.zone {
-					inside = true
-					break
-				}
-			}
-			if !inside {
-				return false
-			}
+		spot, known := c.runtime.guideSpot, c.runtime.guideSpot > 0
+		if r.sonarZoneCondition {
+			spot, known = c.runtime.zone, c.runtime.zoneKnown
+		}
+		if len(r.chartZones) > 0 && known && !slices.Contains(r.chartZones, spot) {
+			return false
 		}
 	}
 	if !c.lureBait {

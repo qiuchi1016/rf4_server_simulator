@@ -8,6 +8,38 @@ import (
 	"rf4server/internal/store"
 )
 
+func TestBaitOverrideRoundTripsSeaGuideCondition(t *testing.T) {
+	s, db := newStaticRigTestServer(t)
+	setBaitRuleSwitch(t, s, "1")
+	info, ok := ExportedBaitRules("剑鱼")
+	if !ok {
+		t.Fatal("缺少剑鱼内置规则")
+	}
+	for _, tc := range []struct {
+		name, condition string
+		wantGuide       bool
+	}{{"只编辑内置规则的饵", info.Condition, true}, {"既有声呐区条件", "海图75或80号区域", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ov := store.FishBaitOverride{FishZh: "剑鱼", Allow: []string{"Hunter 1000-1"}, Deny: info.Deny,
+				BottomOnly: info.BottomOnly, Condition: tc.condition, Enabled: true}
+			if err := db.SaveFishBaitOverride(t.Context(), ov, "test"); err != nil {
+				t.Fatal(err)
+			}
+			s.invalidateBaitOverrides()
+			for _, point := range []struct {
+				zone, guide int
+				want        bool
+			}{{95, 75, tc.wantGuide}, {15, 0, tc.wantGuide}, {75, 120, !tc.wantGuide}} {
+				c := fishRollContext{runtime: &fishRollRuntime{chartKnown: true, zoneKnown: true, zone: point.zone, guideSpot: point.guide}}
+				keys, _ := s.filterFishBaitSet("挪威海", []string{"pilkerlures_2687"}, []string{"x_gladius"}, []float64{1}, time.Now(), c)
+				if (len(keys) > 0) != point.want {
+					t.Errorf("保存条件 %q 后，声呐区 %d、攻略标深 %d 的候选=%v，期望放行=%t", tc.condition, point.zone, point.guide, keys, point.want)
+				}
+			}
+		})
+	}
+}
+
 // 轮换用时间桶计算：同桶不变、跨桶轮转、未配置或间隔过小不启用。
 func TestExportedRotationState(t *testing.T) {
 	groups := [][]string{{"甲"}, {"乙"}, {"丙"}}

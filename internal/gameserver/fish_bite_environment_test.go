@@ -341,8 +341,9 @@ func TestLoadFishSpotPreferenceMatchesChartZone(t *testing.T) {
 	if _, err := db.SQL.Exec(seed); err != nil {
 		t.Fatal(err)
 	}
-	c := &fishRollContext{runtime: &fishRollRuntime{zoneKnown: true, zone: 120}}
-	pref, hasData := srv.loadFishSpotPreference(context.Background(), "chart-zone-test", c)
+	c := &fishRollContext{loc: "level_012_north_sea", x: 4257.9, z: 6.16, hasPos: true}
+	srv.prepareFishRollRuntime(t.Context(), c, "chart-zone-test")
+	pref, hasData := c.runtime.spotPref, c.runtime.spotData
 	if !hasData || pref["atl_cod"] <= 0 {
 		t.Fatalf("当前海图区号的观测没有生效: %v has=%v", pref, hasData)
 	}
@@ -352,8 +353,14 @@ func TestLoadFishSpotPreferenceMatchesChartZone(t *testing.T) {
 	if _, ok := pref["atl_mackerel"]; ok {
 		t.Fatal("其他区号的观测不能带进当前区号")
 	}
-	if _, has := srv.loadFishSpotPreference(context.Background(), "chart-zone-test", &fishRollContext{}); has {
-		t.Fatal("定位不到海图区号时不该启用钓点观测")
+	for _, unknown := range []fishRollContext{
+		{loc: "level_012_north_sea", x: 3500, z: 700, hasPos: true}, // 声呐120号，未标定为120米钓点
+		{loc: "loc12_170"}, // 只有声呐区号，没有可核对的落点
+	} {
+		srv.prepareFishRollRuntime(t.Context(), &unknown, "chart-zone-test")
+		if unknown.runtime.spotData {
+			t.Fatalf("无已核对的攻略点时不应给观测加权：%+v", unknown.runtime)
+		}
 	}
 }
 

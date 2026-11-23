@@ -10,8 +10,10 @@ import (
 type fishRollContext struct {
 	x, z   float64
 	hasPos bool
-	spot   uint64
-	loc    string
+	// playerPosOnly 表示坐标来自人物，缺少本竿饵落点。
+	playerPosOnly bool
+	spot          uint64
+	loc           string
 	// uid 本次判鱼的玩家。窝料账本按 (uid, loc, 落点格子) 结算，
 	// 没有它就查不到窝。
 	uid        int64
@@ -59,13 +61,14 @@ type fishRollRuntime struct {
 	lureKnown bool
 	// levelChecked 保证一次判鱼只解析一次地点与海图区号。
 	levelChecked bool
-	// chartKnown 表示该地点有没有海图（目前只有挪威海）；zoneKnown 表示本次
-	// 落点能否定位到具体区号。两者共同决定海图条件算不算有证据。
+	// chartKnown 表示该地点有没有海图，zoneKnown 表示是否定位到声呐网格。
 	chartKnown bool
 	zone       int
 	zoneKnown  bool
-	spotPref   map[string]float64
-	spotData   bool
+	// guideSpot 是已定位的纸图测深标注，0 表示未知。
+	guideSpot int
+	spotPref  map[string]float64
+	spotData  bool
 	// sonarSystemID 是海图声呐档案键（如 loc12_215）；内陆为空。
 	sonarSystemID string
 }
@@ -81,6 +84,13 @@ func (r *fishRollRuntime) chartZoneLabel() string {
 	default:
 		return strconv.Itoa(r.zone)
 	}
+}
+
+func (r *fishRollRuntime) guideSpotLabel() string {
+	if r == nil || r.guideSpot == 0 {
+		return "未知"
+	}
+	return strconv.Itoa(r.guideSpot)
 }
 
 func rollContext(contexts []fishRollContext) fishRollContext {

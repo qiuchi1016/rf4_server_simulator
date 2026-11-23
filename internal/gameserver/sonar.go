@@ -739,8 +739,7 @@ func sonarChartLevel(levelKey string) bool {
 	return false
 }
 
-// sonarZoneNumber 取水域 systemID（loc12_215）里的数字段。攻略里的
-// "海图215号区域"和客户端的水域编号是同一个数字。
+// sonarZoneNumber 取水域 systemID（loc12_215）中的声呐网格编号。
 func sonarZoneNumber(systemID string) (int, bool) {
 	i := strings.LastIndexByte(systemID, '_')
 	if i < 0 || i+1 >= len(systemID) {

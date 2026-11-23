@@ -1319,6 +1319,9 @@ func (s *Server) rollFishFromDB(loc, bait string) *RolledFish {
 
 func (s *Server) rollFishFromDBWithRules(loc, bait string, gearCapKg float64, bonus fishingSkillBonus, contexts ...fishRollContext) *RolledFish {
 	c := rollContext(contexts)
+	if c.loc == "" {
+		c.loc = loc
+	}
 	if c.baits == nil {
 		c.baits = []string{bait}
 	}
@@ -1543,7 +1546,8 @@ func (s *Server) rollFishFromDBWithRules(loc, bait string, gearCapKg float64, bo
 		// 咬钩落点审计：世界坐标 + 40m 网格 + 命中的区域名册（后台划区对账用）。
 		// resolveFishZone 与 applyFishZoneRoster 同源（缓存复用），纯查不改判鱼结果。
 		s.log.Info("咬钩落点", "鱼种", key, "x", math.Round(c.x), "z", math.Round(c.z),
-			"网格", fishArea(statLoc, c), "名册区域", zoneHitNote(s.fishZonesFor(cctx, statLoc), c), "海图区号", c.runtime.chartZoneLabel())
+			"网格", fishArea(statLoc, c), "名册区域", zoneHitNote(s.fishZonesFor(cctx, statLoc), c),
+			"海图区号", c.runtime.chartZoneLabel(), "攻略标深", c.runtime.guideSpotLabel())
 		if s.huntStateEnabled() && c.uid > 0 {
 			s.log.Info("发鱼阶段", "uid", c.uid, "loc", c.loc, "spot", c.spot,
 				"stage", s.fishHuntStageName(huntReady.Mode, huntReady.Stage), "A", roundTo(huntReady.A, 3),
@@ -3137,7 +3141,8 @@ func (s *Server) onRodBiteTimerTicket(uid int64, st *FishState, ticket fishingTi
 	buildRollCtx := func(pity bool) fishRollContext {
 		return fishRollContext{
 			x: x, z: z, hasPos: hasPos, spot: st.Spot, depthCM: baitDepthCM,
-			lureLayer: lureLayer, lureAction: lureAction, lureMask: lureMask, lureSpeed: lureSpeed, rigType: rigType,
+			playerPosOnly: !st.HasCastPos && st.HasPos,
+			lureLayer:     lureLayer, lureAction: lureAction, lureMask: lureMask, lureSpeed: lureSpeed, rigType: rigType,
 			onBoat: boatOn, boatKnown: boatKnown, pityEnv: pity,
 			audit: &fishRollAudit{},
 			now:   now, weather: sess.weatherAt(st.Loc, now), happyBite: sess.currentHappyHour().BiteBonus,
@@ -3172,7 +3177,8 @@ func (s *Server) onRodBiteTimerTicket(uid int64, st *FishState, ticket fishingTi
 		}
 		s.log.Info("本轮无符合条件的鱼，继续等待", "rod", shortGUID(st.GearGuid), "rig_type", st.RigType,
 			"x", math.Round(x), "z", math.Round(z), "场景", st.Loc, "网格", fishArea(gridLoc, rollCtx),
-			"名册区域", zoneNote, "海图区号", audit.runtime.chartZoneLabel(), "空因", reason, "连续空轮", st.EmptyStreak)
+			"名册区域", zoneNote, "海图区号", audit.runtime.chartZoneLabel(), "攻略标深", audit.runtime.guideSpotLabel(),
+			"空因", reason, "连续空轮", st.EmptyStreak)
 		s.emptyWeatherBiteLocked(sess, st, now)
 		st.mu.Unlock()
 		return

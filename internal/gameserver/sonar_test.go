@@ -458,7 +458,7 @@ func TestSonarProfileLookup(t *testing.T) {
 	}
 }
 
-func TestSonarChartZoneUsesGuideZoneNumbers(t *testing.T) {
+func TestSonarChartZoneUsesSonarGridNumbers(t *testing.T) {
 	if !sonarChartLevel("level_012_north_sea") {
 		t.Fatal("挪威海应有海图水域网格")
 	}

@@ -1,5 +1,35 @@
 package gameserver
 
+import "math"
+
+const seaTerrainOriginZ = -1957
+
+// 挪威海 4.0.25034 level24 的 WorldShifter（组件 51259）有五个预设偏移，
+// 加上初始未平移的坐标系。14/2 的钓组落点随原点平移，同包的姿态使用地图相对坐标。
+var seaFrameOffsets = [...][2]float64{
+	{0, 0}, {248.9757233, 474.9511719}, {2342.3054199, -1039.1062012},
+	{2891.2993164, 227.2830048}, {3928.8159180, 689.5770264}, {3640.3603516, -575.5109253},
+}
+
+func seaChartLanding(rawX, rawZ, poseX, poseZ, castM float64) (x, z float64, known bool) {
+	if !finiteSonarNumber(castM) || castM < 0 || !finiteSonarNumber(poseX) || !finiteSonarNumber(poseZ) {
+		return 0, 0, false
+	}
+	// 用同竿的抛距和姿态识别唯一可达的坐标系。2 米余量覆盖竿位与姿态原点差。
+	// 最终参与判鱼的是钓组落点加偏移，姿态只用于选坐标系。
+	for _, offset := range seaFrameOffsets {
+		cx, cz := rawX+offset[0], rawZ+offset[1]
+		if math.Hypot(cx-poseX, cz-(poseZ+seaTerrainOriginZ)) > castM+2 {
+			continue
+		}
+		if known {
+			return 0, 0, false
+		}
+		x, z, known = cx, cz, true
+	}
+	return x, z, known
+}
+
 // 挪威海攻略以纸地图的测深标注命名钓点。同一深度可有多处，zone 是
 // 标注中心所在的声呐矩形，0 表示中心在矩形覆盖范围外。
 // 4.0.25034 原图（2048²）像素换算为海床世界坐标：
@@ -24,46 +54,13 @@ var seaGuideMarks = []struct {
 
 const seaGuideRadius = 20.0
 
-// spot 用于渔获观测，只有实际落点才能命中。possible 用于区域限制：
-// nil 表示没有定位证据，非 nil 的空表表示当前位置排除了所有已标定钓点。
-func seaGuideSpotsAtRoll(c *fishRollContext) (spot int, possible []int) {
-	if !c.runtime.chartKnown {
-		return 0, nil
-	}
-	systemID := c.runtime.sonarSystemID
-	if c.hasPos && !c.playerPosOnly {
-		// 没有场景编号时直接使用落点。有编号时先排除局部坐标与世界坐标不一致的情况。
-		consistent := true
-		if systemID != "" {
-			zone, ok := sonarZoneForPoint("level_012_north_sea", c.x, c.z)
-			consistent = ok && c.runtime.zoneKnown && zone == c.runtime.zone
-		}
-		if consistent {
-			if spot := seaGuideSpotForPoint(c.x, c.z); spot > 0 {
-				return spot, []int{spot}
-			}
-			return 0, []int{}
-		}
-	}
-
-	// 只有客户端声呐区号也能排除远处钓点。检查圆与矩形的交集，保留跨界钓点。
-	grids, _ := loadSonarGrids()
-	grid, ok := grids[systemID]
-	if !ok {
-		return 0, nil
-	}
-	possible = []int{}
-	for _, mark := range seaGuideMarks {
-		dx := mark.x - clampFloat(mark.x, grid.topLeftX, grid.topLeftX+grid.width)
-		dz := mark.z - clampFloat(mark.z, grid.topLeftZ-grid.length, grid.topLeftZ)
-		if dx*dx+dz*dz <= seaGuideRadius*seaGuideRadius {
-			possible = append(possible, mark.spot)
-		}
-	}
-	return 0, possible
-}
-
 func seaGuideSpotForPoint(x, z float64) int {
+	u, v := 78+x*.38, 1970-(z-seaTerrainOriginZ)*.38
+	for _, bank := range seaChartBanks {
+		if bank.contains(u, v) {
+			return bank.spot
+		}
+	}
 	for _, mark := range seaGuideMarks {
 		dx, dz := x-mark.x, z-mark.z
 		if dx*dx+dz*dz <= seaGuideRadius*seaGuideRadius {

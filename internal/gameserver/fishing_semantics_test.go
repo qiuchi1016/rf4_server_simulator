@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
 	"rf4server/internal/logging"
 	"rf4server/internal/proto"
 	"rf4server/internal/store"
+	"rf4server/internal/wiregen"
 )
 
 func TestCastSetsCastTsAndHookedSchedulePreservesIt(t *testing.T) {
@@ -521,9 +523,38 @@ func TestCastLandingPositionFromObject(t *testing.T) {
 	fields[6] = proto.Field{Op: "U32", Num: ptrU64(uint64(proto.F32Bits(123.5)))}
 	fields[7] = proto.Field{Op: "U32", Num: ptrU64(uint64(proto.F32Bits(-45.25)))}
 	obj := proto.Obj("olieodeoaof", 0, fields...)
-	x, z, ok := castLandingPosition(proto.Args524(obj))
+	x, z, ok := castLandingPosition(proto.Args524(obj), "loc1_02")
 	if !ok || x != 123.5 || z != -45.25 {
 		t.Fatalf("landing=(%v,%v,%v), want=(123.5,-45.25,true)", x, z, ok)
+	}
+}
+
+func TestNorwegianSeaCastLandingFromShiftedFrame(t *testing.T) {
+	// 4.0.25034 实机 14/2，取本竿参照位置、原始饵落点与请求抛距。
+	for _, tc := range []struct {
+		scene                              string
+		rawX, rawZ, poseX, poseZ, distance float32
+		x, z                               float64
+		guide                              int
+	}{
+		{"loc12_103", 14.67511, 761.9345, 2907.977, 2947.3718, 2.71, 2905.9744, 989.2175, 0},
+		{"loc12_94", 686.06293, 862.7506, 3574.8462, 3048.7686, 3, 3577.3622, 1090.0336, 75},
+		{"loc12_15", 272, 769, 254, 2740, 23, 272, 769, 0},
+	} {
+		t.Run(tc.scene, func(t *testing.T) {
+			pose := wiregen.MustMakeObj("deggnlnohoh", map[int]*proto.Value{0: proto.F32(tc.poseX), 2: proto.F32(tc.poseZ)})
+			obj := wiregen.MustMakeObj("olieodeoaof", map[int]*proto.Value{
+				0: proto.F32(tc.distance), 3: proto.StrVal(tc.scene), 6: proto.F32(tc.rawX), 7: proto.F32(tc.rawZ), 10: pose,
+			})
+			x, z, ok := castLandingPosition(proto.Args524(obj), tc.scene)
+			if !ok || math.Hypot(x-tc.x, z-tc.z) > .002 || seaGuideSpotForPoint(x, z) != tc.guide {
+				t.Errorf("饵落点=(%.3f,%.3f,%t) 标深=%d", x, z, ok, seaGuideSpotForPoint(x, z))
+			}
+			obj.Fields[10].Val = nil
+			if _, _, ok := castLandingPosition(obj, tc.scene); ok {
+				t.Error("缺少同竿参照坐标时不能把局部坐标当成海图世界坐标")
+			}
+		})
 	}
 }
 

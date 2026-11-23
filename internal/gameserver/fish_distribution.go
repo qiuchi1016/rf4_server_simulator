@@ -54,7 +54,7 @@ func distributionZeroFloor(share float64, rarity int64) float64 {
 	return math.Min(floor, distributionZeroFloorCap)
 }
 
-// 区域以玩家世界位置划分；缺位置时使用客户端场景与钓点编号。
+// 区域以饵落点的世界位置划分；缺落点时使用水域与钓点编号生成分布键。
 func fishArea(loc string, c fishRollContext) string {
 	if c.hasPos && !math.IsNaN(c.x) && !math.IsNaN(c.z) && !math.IsInf(c.x, 0) && !math.IsInf(c.z, 0) {
 		return fmt.Sprintf("%s/%.0f/%.0f", loc, math.Floor(c.x/40), math.Floor(c.z/40))

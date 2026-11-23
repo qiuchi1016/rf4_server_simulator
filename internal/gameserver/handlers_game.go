@@ -940,7 +940,7 @@ func hCast(ctx *Ctx) ([]byte, bool) {
 			st.Spot = spot
 		}
 	}
-	castX, castZ, hasCastPos := castLandingPosition(ctx.Tree)
+	castX, castZ, hasCastPos := castLandingPosition(ctx.Tree, st.Loc)
 	st.GearGuid = gear
 	st.CastPosX, st.CastPosZ, st.HasCastPos = castX, castZ, hasCastPos
 	st.mu.Unlock()
@@ -1087,7 +1087,7 @@ func findObjU32(root *proto.Value, class string) uint64 {
 
 // castLandingPosition 读取 14/2 olieodeoaof.f6/f7 的实际抛竿落点。
 // 这两列在 wire 上以 U32 承载 F32 位型。
-func castLandingPosition(root *proto.Value) (float64, float64, bool) {
+func castLandingPosition(root *proto.Value, loc string) (float64, float64, bool) {
 	obj := findObj(root, "olieodeoaof")
 	if obj == nil {
 		return 0, 0, false
@@ -1105,6 +1105,15 @@ func castLandingPosition(root *proto.Value) (float64, float64, bool) {
 	z := float64(math.Float32frombits(uint32(u64Of(zf.Num))))
 	if math.IsNaN(x) || math.IsNaN(z) || math.IsInf(x, 0) || math.IsInf(z, 0) {
 		return 0, 0, false
+	}
+	if strings.HasPrefix(loc, "loc12_") || loc == "level_012_north_sea" {
+		pose := obj.Field(10).Val
+		if pose == nil || pose.Class != "deggnlnohoh" || pose.Field(0).Num == nil || pose.Field(2).Num == nil || obj.Field(0).Num == nil {
+			return 0, 0, false
+		}
+		px := float64(math.Float32frombits(uint32(*pose.Field(0).Num)))
+		pz := float64(math.Float32frombits(uint32(*pose.Field(2).Num)))
+		return seaChartLanding(x, z, px, pz, throwDistance(obj))
 	}
 	return x, z, true
 }

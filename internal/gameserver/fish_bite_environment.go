@@ -81,22 +81,14 @@ func (s *Server) prepareFishRollRuntime(ctx context.Context, c *fishRollContext,
 		c.runtime.levelChecked = true
 		levelKey := s.resolveRollLevelKey(ctx, c.loc)
 		c.runtime.chartKnown = sonarChartLevel(levelKey)
-		if strings.HasPrefix(c.loc, "loc12_") {
-			c.runtime.sonarSystemID = c.loc
-		}
-		if c.runtime.chartKnown {
-			// 海图区号以客户端上报的 loc12_N 为权威（2026-11-14 实测：海钓 14/2
-			// 落点是客户端局部坐标，不是世界坐标，按坐标反查永不命中——玩家真实
-			// 在 198 区时落点报 (-100,680)，而客户端 loc 恒为 loc12_198）。
-			// 坐标反查只作缺省回退。
-			if n, ok := sonarZoneFromLoc(c.loc); ok {
-				c.runtime.zone, c.runtime.zoneKnown = n, true
-			} else if c.hasPos {
-				c.runtime.zone, c.runtime.zoneKnown = sonarZoneForPoint(levelKey, c.x, c.z)
+		if c.runtime.chartKnown && c.hasPos && !c.playerPosOnly {
+			c.runtime.guideSpot = seaGuideSpotForPoint(c.x, c.z)
+			c.runtime.zone, c.runtime.zoneKnown = sonarZoneForPoint(levelKey, c.x, c.z)
+			if c.runtime.zoneKnown {
+				c.runtime.sonarSystemID = fmt.Sprintf("loc12_%02d", c.runtime.zone)
 			}
 		}
 	}
-	c.runtime.guideSpot, c.runtime.possibleGuideSpots = seaGuideSpotsAtRoll(c)
 	if c.audit != nil {
 		*c.audit = fishRollAudit{statLoc: statLoc, runtime: c.runtime}
 	}

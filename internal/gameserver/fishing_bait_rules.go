@@ -744,20 +744,14 @@ func fishChartCondition(condition string) (guide, sonar []int, chartAny bool) {
 
 // ruleConditionAllows 只用客户端给得出的证据判断攻略前置条件：海图条件要有能
 // 定位的抛竿落点，拟饵动作条件要有钓组动作上报。天然饵不套用“使用拟饵时”的
-// 动作和船条件；拿不到证据时保持中性，避免把没有对应上报的钓法一律判成不合格。
+// 动作和船条件。限定区域的规则要命中落点，缺少动作上报则保持中性。
 func ruleConditionAllows(r fishBaitRule, c fishRollContext) bool {
 	if c.runtime != nil && (r.chartAny || len(r.chartZones) > 0 || len(r.sonarZones) > 0) {
 		if !c.runtime.chartKnown {
 			return false
 		}
-		guideAllowed := len(r.chartZones) > 0 && c.runtime.possibleGuideSpots == nil
-		for _, spot := range c.runtime.possibleGuideSpots {
-			if slices.Contains(r.chartZones, spot) {
-				guideAllowed = true
-				break
-			}
-		}
-		sonarAllowed := len(r.sonarZones) > 0 && (!c.runtime.zoneKnown || slices.Contains(r.sonarZones, c.runtime.zone))
+		guideAllowed := c.runtime.guideSpot > 0 && slices.Contains(r.chartZones, c.runtime.guideSpot)
+		sonarAllowed := c.runtime.zoneKnown && slices.Contains(r.sonarZones, c.runtime.zone)
 		if !r.chartAny && !guideAllowed && !sonarAllowed {
 			return false
 		}

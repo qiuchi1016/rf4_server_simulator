@@ -61,7 +61,7 @@ func TestSonarGuideSpotRequiresBaitLanding(t *testing.T) {
 			st.mu.Unlock()
 			c := sonarRollContext(srv, sess, "level_012_north_sea", time.Now())
 			srv.prepareFishRollRuntime(t.Context(), &c, "")
-			if !c.hasPos || c.runtime.zone != 170 || c.runtime.guideSpot != tc.want {
+			if !c.hasPos || c.runtime.zoneKnown != tc.cast || (tc.cast && c.runtime.zone != 170) || c.runtime.guideSpot != tc.want {
 				t.Fatalf("位置可用=%t，声呐网格=%d，攻略标深=%d，期望标深=%d", c.hasPos, c.runtime.zone, c.runtime.guideSpot, tc.want)
 			}
 		})

@@ -3113,16 +3113,16 @@ func (s *Server) onRodBiteTimerTicket(uid int64, st *FishState, ticket fishingTi
 		st.mu.Unlock()
 		return
 	}
-	x, z, hasPos := st.CastPosX, st.CastPosZ, st.HasCastPos
-	if !hasPos {
-		x, z, hasPos = st.PosX, st.PosZ, st.HasPos
+	groundX, groundZ, hasGroundPos := st.CastPosX, st.CastPosZ, st.HasCastPos
+	if !hasGroundPos {
+		groundX, groundZ, hasGroundPos = st.PosX, st.PosZ, st.HasPos
 	}
 	probability := s.biteProbabilityForLoc(st.Loc)
 	if s.tunableF("fish_bait_rules_enabled", 0) == 1 || s.tunableF("fish_weather_enabled", 0) == 1 {
 		probability = math.Min(.95, probability)
 	}
 	// 窝料死窝闸门：同一格子堆超过 15 份开始压开口率，22 份以上不排咬钩。
-	probability *= s.groundbaitBiteGate(s.dbCtx(), uid, st.Loc, x, z, hasPos, st.Spot, st.RigType)
+	probability *= s.groundbaitBiteGate(s.dbCtx(), uid, st.Loc, groundX, groundZ, hasGroundPos, st.Spot, st.RigType)
 	// 饵效控速：单轮判定概率按对口分三档（路亚轮单独一套参数）。
 	// 受当前开关门控（审查 P2-1）：运行中热关闭后，残留的 st.PaceKnown
 	// 不得继续压低本杆开口率。
@@ -3140,9 +3140,8 @@ func (s *Server) onRodBiteTimerTicket(uid int64, st *FishState, ticket fishingTi
 	boatOn, boatKnown := st.onBoatLocked(now.Unix())
 	buildRollCtx := func(pity bool) fishRollContext {
 		return fishRollContext{
-			x: x, z: z, hasPos: hasPos, spot: st.Spot, depthCM: baitDepthCM,
-			playerPosOnly: !st.HasCastPos && st.HasPos,
-			lureLayer:     lureLayer, lureAction: lureAction, lureMask: lureMask, lureSpeed: lureSpeed, rigType: rigType,
+			x: st.CastPosX, z: st.CastPosZ, hasPos: st.HasCastPos, spot: st.Spot, depthCM: baitDepthCM,
+			lureLayer: lureLayer, lureAction: lureAction, lureMask: lureMask, lureSpeed: lureSpeed, rigType: rigType,
 			onBoat: boatOn, boatKnown: boatKnown, pityEnv: pity,
 			audit: &fishRollAudit{},
 			now:   now, weather: sess.weatherAt(st.Loc, now), happyBite: sess.currentHappyHour().BiteBonus,
@@ -3176,7 +3175,7 @@ func (s *Server) onRodBiteTimerTicket(uid int64, st *FishState, ticket fishingTi
 			reason = "概率/权重全零"
 		}
 		s.log.Info("本轮无符合条件的鱼，继续等待", "rod", shortGUID(st.GearGuid), "rig_type", st.RigType,
-			"x", math.Round(x), "z", math.Round(z), "场景", st.Loc, "网格", fishArea(gridLoc, rollCtx),
+			"x", math.Round(rollCtx.x), "z", math.Round(rollCtx.z), "有饵落点", rollCtx.hasPos, "场景", st.Loc, "网格", fishArea(gridLoc, rollCtx),
 			"名册区域", zoneNote, "海图区号", audit.runtime.chartZoneLabel(), "攻略标深", audit.runtime.guideSpotLabel(),
 			"空因", reason, "连续空轮", st.EmptyStreak)
 		s.emptyWeatherBiteLocked(sess, st, now)
@@ -3185,7 +3184,7 @@ func (s *Server) onRodBiteTimerTicket(uid int64, st *FishState, ticket fishingTi
 	}
 	st.EmptyStreak = 0
 	// 鱼吃口扣份：窝被吃薄，死窝会自己缓过来（设计稿第 6 节）。
-	s.groundbaitConsumeBite(s.dbCtx(), uid, st.Loc, x, z, hasPos, st.Spot, s.tunableF("groundbait_consume_bite", 0.20))
+	s.groundbaitConsumeBite(s.dbCtx(), uid, st.Loc, groundX, groundZ, hasGroundPos, st.Spot, s.tunableF("groundbait_consume_bite", 0.20))
 	if !f.BaitsKnown {
 		f.BaitGUIDs, f.BaitsKnown = s.biteBaitSnapshot(s.dbCtx(), st.GearGuid)
 	}

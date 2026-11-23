@@ -1,6 +1,13 @@
 package gameserver
 
-import "math"
+import (
+	"bytes"
+	_ "embed"
+	"encoding/json"
+	"image"
+	"image/png"
+	"math"
+)
 
 const seaTerrainOriginZ = -1957
 
@@ -30,42 +37,49 @@ func seaChartLanding(rawX, rawZ, poseX, poseZ, castM float64) (x, z float64, kno
 	return x, z, known
 }
 
-// 挪威海攻略以纸地图的测深标注命名钓点。同一深度可有多处，zone 是
-// 标注中心所在的声呐矩形，0 表示中心在矩形覆盖范围外。
-// 4.0.25034 原图（2048²）像素换算为海床世界坐标：
-// x=(u-78)/0.38，z=(1970-v)/0.38-1957。只存核对后的定位数值。
-var seaGuideMarks = []struct {
-	spot, zone int
-	x, z       float64
-}{
-	{30, 125, 1384.21, 569.32},
-	{30, 144, 1834.21, 319.32},
-	{34, 198, 2342.11, -272.79},
-	{41, 258, 1531.58, -1093.84},
-	{55, 186, 3710.53, -25.42},
-	{75, 95, 3921.05, 1182.47},
-	{80, 252, 3281.58, -925.42},
-	{100, 0, 3921.05, 2093},
-	{120, 170, 4257.89, 6.16},
-	{120, 231, 2128.95, -864.89},
-	{120, 273, 2928.95, -1491.21},
-	{215, 154, 4252.63, 335.11},
+// Pixels in the derived grayscale map contain a printed sounding, or zero.
+// The map and its reference points share the same 4.0.25034 chart coordinates.
+//go:embed assets/sea_chart_regions.png
+var seaRegionPNG []byte
+
+//go:embed assets/sea_chart_marks.json
+var seaMarkJSON []byte
+
+type seaChartMark struct {
+	spot int
+	x, z float64
 }
 
-const seaGuideRadius = 20.0
+var seaRegions, seaGuideMarks = loadSeaChart()
+
+func loadSeaChart() (*image.Gray, []seaChartMark) {
+	img, err := png.Decode(bytes.NewReader(seaRegionPNG))
+	if err != nil {
+		panic(err)
+	}
+	regions, ok := img.(*image.Gray)
+	if !ok || regions.Bounds() != image.Rect(0, 0, 2048, 2048) {
+		panic("unexpected Norwegian Sea chart dimensions or pixel format")
+	}
+	var rows [][3]int
+	if err := json.Unmarshal(seaMarkJSON, &rows); err != nil {
+		panic(err)
+	}
+	marks := make([]seaChartMark, 0, len(rows))
+	for _, row := range rows {
+		d, u, v := row[0], row[1], row[2]
+		if d <= 0 || int(regions.GrayAt(u, v).Y) != d {
+			panic("Norwegian Sea chart mark disagrees with region map")
+		}
+		marks = append(marks, seaChartMark{d, (float64(u) - 78) / .38, (1970-float64(v))/.38 + seaTerrainOriginZ})
+	}
+	return regions, marks
+}
 
 func seaGuideSpotForPoint(x, z float64) int {
-	u, v := 78+x*.38, 1970-(z-seaTerrainOriginZ)*.38
-	for _, bank := range seaChartBanks {
-		if bank.contains(u, v) {
-			return bank.spot
-		}
+	u, v := math.Round(78+x*.38), math.Round(1970-(z-seaTerrainOriginZ)*.38)
+	if !(u >= 0 && u < float64(seaRegions.Rect.Max.X) && v >= 0 && v < float64(seaRegions.Rect.Max.Y)) {
+		return 0
 	}
-	for _, mark := range seaGuideMarks {
-		dx, dz := x-mark.x, z-mark.z
-		if dx*dx+dz*dz <= seaGuideRadius*seaGuideRadius {
-			return mark.spot
-		}
-	}
-	return 0
+	return int(seaRegions.GrayAt(int(u), int(v)).Y)
 }

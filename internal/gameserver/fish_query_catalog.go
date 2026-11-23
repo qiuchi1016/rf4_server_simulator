@@ -155,30 +155,42 @@ func (s *Server) fishQueryMaps(ctx context.Context, req FishQueryRequest, c fish
 			} else {
 				rule, _ = s.resolveBaitRule(ctx, nameMap[req.Fish])
 			}
-			priority := map[int]int{}
 			for _, number := range rule.chartZones {
 				guidePriority[number] += 1000
 			}
+			sonarPriority := map[int]int{}
 			for _, zone := range rule.sonarZones {
-				priority[zone] = 1000
+				sonarPriority[zone] = 1000
 			}
+			type candidate struct {
+				point fishQueryPoint
+				score int
+			}
+			var ranked []candidate
 			for _, mark := range seaGuideMarks {
-				if score := guidePriority[mark.spot]; score > priority[mark.zone] {
-					byZone[mark.zone] = fishQueryPoint{x: &mark.x, z: &mark.z, zone: mark.zone, kind: "sea_grid"}
-					priority[mark.zone] = score
+				score := guidePriority[mark.spot]
+				if score == 0 {
+					continue
 				}
+				zone, _ := sonarZoneForPoint(key, mark.x, mark.z)
+				if score < sonarPriority[zone] {
+					continue
+				}
+				// A sonar grid can contain several separate printed fishing spots.
+				delete(byZone, zone)
+				ranked = append(ranked, candidate{fishQueryPoint{x: &mark.x, z: &mark.z, zone: zone, kind: "sea_grid"}, score})
 			}
 			for _, p := range byZone {
-				loc.points = append(loc.points, p)
+				ranked = append(ranked, candidate{p, sonarPriority[p.zone]})
 			}
-			sort.Slice(loc.points, func(i, j int) bool {
-				if priority[loc.points[i].zone] != priority[loc.points[j].zone] {
-					return priority[loc.points[i].zone] > priority[loc.points[j].zone]
+			sort.SliceStable(ranked, func(i, j int) bool {
+				if ranked[i].score != ranked[j].score {
+					return ranked[i].score > ranked[j].score
 				}
-				return loc.points[i].zone < loc.points[j].zone
+				return ranked[i].point.zone < ranked[j].point.zone
 			})
-			if len(loc.points) > 6 {
-				loc.points = loc.points[:6]
+			for _, entry := range ranked[:min(6, len(ranked))] {
+				loc.points = append(loc.points, entry.point)
 			}
 		} else {
 			loc.regions, err = newFishQueryRegions(statLoc, fishQueryRegionScenes[key], c.now, s.tunableF("fish_distribution_enabled", 0) == 1, s.fishZonesFor(ctx, statLoc))

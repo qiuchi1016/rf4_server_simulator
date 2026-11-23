@@ -51,6 +51,27 @@ func TestBaitOverrideRoundTripsSeaGuideCondition(t *testing.T) {
 	}
 }
 
+func TestSeaBaitOverrideMatchesBothPrinted90Areas(t *testing.T) {
+	s, db := newStaticRigTestServer(t)
+	setBaitRuleSwitch(t, s, "1")
+	ov := store.FishBaitOverride{FishZh: "剑鱼", Allow: []string{"Hunter 1000-1"}, Condition: "海图90区", Enabled: true}
+	if err := db.SaveFishBaitOverride(t.Context(), ov, "test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		u, v int
+		want bool
+	}{{550, 1476, true}, {361, 1040, true}, {1182, 850, false}, {1040, 930, false}} {
+		c := fishRollContext{loc: "loc12_90", hasPos: true,
+			x: (float64(tc.u) - 78) / .38, z: (1970-float64(tc.v))/.38 - 1957}
+		s.prepareFishRollRuntime(t.Context(), &c, "挪威海")
+		keys, _ := s.filterFishBaitSet("挪威海", []string{"pilkerlures_2687"}, []string{"x_gladius"}, []float64{1}, time.Now(), c)
+		if (len(keys) > 0) != tc.want {
+			t.Errorf("饵落点 (%d,%d) 标深=%d，剑鱼候选=%v", tc.u, tc.v, c.runtime.guideSpot, keys)
+		}
+	}
+}
+
 // 轮换用时间桶计算：同桶不变、跨桶轮转、未配置或间隔过小不启用。
 func TestExportedRotationState(t *testing.T) {
 	groups := [][]string{{"甲"}, {"乙"}, {"丙"}}

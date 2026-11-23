@@ -234,7 +234,7 @@ func TestSeaBaitEmptyRollLogsChartAndRosterZone(t *testing.T) {
 	// 管理员明确把这两种鱼限制在声呐 75 号区，15 号区因此产生规则空轮。
 	for _, fish := range []string{"剑鱼", "鼠鲨"} {
 		ov := store.FishBaitOverride{
-			FishZh: fish, Allow: []string{"Pilker №2-800 RD"}, Condition: "海图75号区域", Enabled: true,
+			FishZh: fish, Allow: []string{"Pilker №2-800 RD"}, Condition: "声呐75区", Enabled: true,
 		}
 		if err := db.SaveFishBaitOverride(t.Context(), ov, "test"); err != nil {
 			t.Fatal(err)

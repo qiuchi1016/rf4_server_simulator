@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,15 +21,12 @@ type fishBaitRule struct {
 	allow, deny []string
 	bottomOnly  []string
 	condition   string
-	// 攻略前置条件里可核对的部分：海图区号列表（chartAny 表示只要求
-	// “在海图上，区域不限”），以及顺水漂流、jig 阶梯、饵在水中运动三个动作要求。
-	chartZones []int
-	chartAny   bool
-	// 未指定纸图标深的后台覆盖沿用声呐区号。
-	sonarZoneCondition bool
-	needDrift          bool
-	needJig            bool
-	needMotion         bool
+	chartZones  []int // 纸图标深，如“80区”
+	sonarZones  []int // 客户端网格，如“声呐80区”
+	chartAny    bool  // 只要求在海图上
+	needDrift   bool
+	needJig     bool
+	needMotion  bool
 	// needBoat 表示攻略要求“使用有效船票并已上船”。
 	needBoat bool
 	// jigOrMotion 用于“出现 jig 阶梯，或采用路亚钓法且已上船、饵在水中运动”
@@ -263,7 +261,7 @@ func ExportedBaitRuleCount() int { return len(fishBaitRules) }
 // 海图区号、顺水漂流、jig 阶梯、饵在水中运动、已上船。
 // 内置规则与后台覆盖共用同一套解析，避免两条路径判定不一致。
 func (r *fishBaitRule) deriveConditionFlags() {
-	r.chartZones, r.chartAny = fishChartCondition(r.condition)
+	r.chartZones, r.sonarZones, r.chartAny = fishChartCondition(r.condition)
 	r.needDrift = strings.Contains(r.condition, "顺水漂流")
 	needJig := strings.Contains(r.condition, "jig阶梯")
 	needMotion := strings.Contains(r.condition, "饵在水中运动")
@@ -724,44 +722,37 @@ func (s *Server) filterFishBaitSet(loc string, ids []string, keys []string, weig
 	return outKeys, outWeights
 }
 
-// fishChartCondition 解析攻略里的海图前置条件：“海图120号区域”给出区号列表，
-// “海图，区域不限”只要求当前在海图上。区号的含义由规则来源决定。
-func fishChartCondition(condition string) ([]int, bool) {
-	if !strings.Contains(condition, "海图") {
-		return nil, false
+const chartNumberList = `[0-9]+(\s*[或、/,，]\s*[0-9]+)*`
+
+// 兼容“海图75或80号区域”和后台简写“80区”。只提取地点表达式中的数字。
+var chartAreaExpression = regexp.MustCompile(`(海图|声呐)\s*(区号|区|第)?\s*` + chartNumberList + `|` + chartNumberList + `\s*号?\s*区`)
+
+func fishChartCondition(condition string) (guide, sonar []int, chartAny bool) {
+	for _, area := range chartAreaExpression.FindAllString(condition, -1) {
+		zones := &guide
+		if strings.HasPrefix(area, "声呐") {
+			zones = &sonar
+		}
+		for _, number := range strings.FieldsFunc(area, func(r rune) bool { return r < '0' || r > '9' }) {
+			if zone, err := strconv.Atoi(number); err == nil && zone > 0 {
+				*zones = append(*zones, zone)
+			}
+		}
 	}
-	var zones []int
-	for i := 0; i < len(condition); {
-		if condition[i] < '0' || condition[i] > '9' {
-			i++
-			continue
-		}
-		j := i
-		for j < len(condition) && condition[j] >= '0' && condition[j] <= '9' {
-			j++
-		}
-		zone, err := strconv.Atoi(condition[i:j])
-		if err == nil && zone > 0 {
-			zones = append(zones, zone)
-		}
-		i = j
-	}
-	return zones, len(zones) == 0
+	return guide, sonar, len(guide) == 0 && len(sonar) == 0 && strings.Contains(condition, "海图")
 }
 
 // ruleConditionAllows 只用客户端给得出的证据判断攻略前置条件：海图条件要有能
 // 定位的抛竿落点，拟饵动作条件要有钓组动作上报。天然饵不套用“使用拟饵时”的
 // 动作和船条件；拿不到证据时保持中性，避免把没有对应上报的钓法一律判成不合格。
 func ruleConditionAllows(r fishBaitRule, c fishRollContext) bool {
-	if c.runtime != nil && (r.chartAny || len(r.chartZones) > 0) {
+	if c.runtime != nil && (r.chartAny || len(r.chartZones) > 0 || len(r.sonarZones) > 0) {
 		if !c.runtime.chartKnown {
 			return false
 		}
-		spot, known := c.runtime.guideSpot, c.runtime.guideSpot > 0
-		if r.sonarZoneCondition {
-			spot, known = c.runtime.zone, c.runtime.zoneKnown
-		}
-		if len(r.chartZones) > 0 && known && !slices.Contains(r.chartZones, spot) {
+		guideAllowed := len(r.chartZones) > 0 && (c.runtime.guideSpot == 0 || slices.Contains(r.chartZones, c.runtime.guideSpot))
+		sonarAllowed := len(r.sonarZones) > 0 && (!c.runtime.zoneKnown || slices.Contains(r.sonarZones, c.runtime.zone))
+		if !r.chartAny && !guideAllowed && !sonarAllowed {
 			return false
 		}
 	}

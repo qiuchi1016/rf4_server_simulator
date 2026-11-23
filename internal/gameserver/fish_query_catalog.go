@@ -157,11 +157,10 @@ func (s *Server) fishQueryMaps(ctx context.Context, req FishQueryRequest, c fish
 			}
 			priority := map[int]int{}
 			for _, number := range rule.chartZones {
-				if rule.sonarZoneCondition {
-					priority[number] = 1000
-				} else {
-					guidePriority[number] += 1000
-				}
+				guidePriority[number] += 1000
+			}
+			for _, zone := range rule.sonarZones {
+				priority[zone] = 1000
 			}
 			for _, mark := range seaGuideMarks {
 				if score := guidePriority[mark.spot]; score > priority[mark.zone] {

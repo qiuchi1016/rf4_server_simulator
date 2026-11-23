@@ -929,7 +929,7 @@ function renderBrEditor(){
       `<div class="field"><label>轮换间隔（分钟，0=不轮换）</label><input id="brInterval" type="number" min="0" step="1" value="${BR.sec?Math.round(BR.sec/60):0}"></div>`+
       `<div class="field"><label>轮换模式</label><select id="brMode"><option value="soft"${BR.mode!=='strict'?' selected':''}>软性（组外降权，仍可咬）</option><option value="strict"${BR.mode==='strict'?' selected':''}>严格（只认当前组）</option></select></div>`+
     `</div>`+
-    `<div class="field"><label>前置条件（可空，例如：海图120号区域 / 出现 jig 阶梯）</label><input id="brCond" value="${esc(BR.cond&&BR.cond!=='无'?BR.cond:'')}" style="width:100%"></div>`+
+    `<div class="field"><label>前置条件（可空，如 80区 / 出现 jig 阶梯）</label><input id="brCond" value="${esc(BR.cond&&BR.cond!=='无'?BR.cond:'')}" style="width:100%"><div class="tunable-hint">挪威海填「80区」表示纸图上的 80 米钓点。按声呐网格限制时填「声呐80区」。</div></div>`+
     `<div class="field"><label><input type="checkbox" id="brEnabled"${BR.enabled?' checked':''}> 启用这份覆盖（不勾=回落到内置规则）</label></div>`+
     `<div class="actions"><button class="btn good" onclick="saveBaitRule()">保存</button>`+
       `<button class="btn alt" onclick="closeModal()">取消</button>`+

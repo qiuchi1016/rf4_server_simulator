@@ -112,11 +112,10 @@ func (s *Server) baitOverrides(ctx context.Context) map[string]baitOverrideEntry
 				continue
 			}
 			rule := fishBaitRule{
-				sonarZoneCondition: !strings.Contains(o.Condition, guideSoundingQualifier),
-				allow:              cleanRuleTerms(o.Allow),
-				deny:               cleanRuleTerms(o.Deny),
-				bottomOnly:         cleanRuleTerms(o.BottomOnly),
-				condition:          o.Condition,
+				allow:      cleanRuleTerms(o.Allow),
+				deny:       cleanRuleTerms(o.Deny),
+				bottomOnly: cleanRuleTerms(o.BottomOnly),
+				condition:  o.Condition,
 			}
 			rule.deriveConditionFlags()
 			m[ruleName(o.FishZh)] = baitOverrideEntry{

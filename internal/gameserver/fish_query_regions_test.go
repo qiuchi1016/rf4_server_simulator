@@ -230,13 +230,31 @@ func TestFishQuerySeaPointsUseGuideMarksAndEffectiveRule(t *testing.T) {
 	if len(seen) != 2 {
 		t.Errorf("剑鱼应优先检查75米、80米图标位置，命中 %v", seen)
 	}
-	ov := store.FishBaitOverride{FishZh: "剑鱼", Condition: "海图120号区域", Enabled: true}
+	ov := store.FishBaitOverride{FishZh: "剑鱼", Condition: "80区", Enabled: true}
+	if err := db.SaveFishBaitOverride(t.Context(), ov, "test"); err != nil {
+		t.Fatal(err)
+	}
+	s.invalidateBaitOverrides()
+	if p := points()[0]; p.zone != 252 || math.Abs(*p.x-3282) > 5 || math.Abs(*p.z+925) > 5 {
+		t.Errorf("后台填写80区后，首选点应在80米标注中心，得到 %+v", p)
+	}
+	ov.Condition = "120区"
+	if err := db.SaveFishBaitOverride(t.Context(), ov, "test"); err != nil {
+		t.Fatal(err)
+	}
+	s.invalidateBaitOverrides()
+	for i, p := range points()[:3] {
+		if want := []int{170, 231, 273}[i]; p.zone != want {
+			t.Errorf("120米钓点 %d 的声呐区号=%d，期望 %d", i+1, p.zone, want)
+		}
+	}
+	ov.Condition = "声呐120区"
 	if err := db.SaveFishBaitOverride(t.Context(), ov, "test"); err != nil {
 		t.Fatal(err)
 	}
 	s.invalidateBaitOverrides()
 	if p := points()[0]; p.zone != 120 {
-		t.Errorf("管理员覆盖要求声呐120号，优先检查的却是 %d", p.zone)
+		t.Errorf("明确填写声呐120区后，首选点的声呐区号为 %d", p.zone)
 	}
 	setWeatherTestTunable(t, s, "bait_exact_only", "1")
 	if p := points()[0]; p.zone != 95 && p.zone != 252 {

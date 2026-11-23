@@ -32,12 +32,17 @@ func TestFishQueryReplyKeepsCalculatedLocationsSeparate(t *testing.T) {
 	}}
 	reply := formatFishQueryReply("河鲈", result)
 	if !strings.Contains(reply, "路亚·阶梯") || !strings.Contains(reply, "世界落点 X 425.0 / Z 495.0") ||
-		strings.Contains(reply, "海图区") || strings.Contains(reply, "99:99") {
+		strings.Contains(reply, "声呐") || strings.Contains(reply, "米钓点") || strings.Contains(reply, "99:99") {
 		t.Fatalf("manual position mixed with a chart zone or reference: %s", reply)
 	}
 	result.Plans[0].MapName, result.Plans[0].Zone, result.Plans[0].CoordinateKind = "挪威海", 7, "sea_grid"
-	if reply := formatFishQueryReply("鳕鱼", result); !strings.Contains(reply, "（海图区7）") {
+	if reply := formatFishQueryReply("鳕鱼", result); !strings.Contains(reply, "声呐区7") || strings.Contains(reply, "米钓点") {
 		t.Fatalf("missing chart zone: %s", reply)
+	}
+	x, z = 3282, -925
+	result.Plans[0].Map, result.Plans[0].Zone = "level_012_north_sea", 252
+	if reply := formatFishQueryReply("剑鱼", result); !strings.Contains(reply, "80米钓点") {
+		t.Errorf("未展示玩家在海图上看到的钓点：%s", reply)
 	}
 }
 

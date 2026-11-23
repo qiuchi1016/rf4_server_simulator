@@ -28,16 +28,21 @@ func seaGuideSpotAtRoll(c *fishRollContext) int {
 	if !c.hasPos || c.playerPosOnly || !c.runtime.chartKnown {
 		return 0
 	}
+	spot := seaGuideSpotForPoint(c.x, c.z)
+	if spot > 0 && c.runtime.zoneKnown {
+		zone, ok := sonarZoneForPoint("level_012_north_sea", c.x, c.z)
+		if !ok || zone != c.runtime.zone {
+			return 0
+		}
+	}
+	return spot
+}
+
+func seaGuideSpotForPoint(x, z float64) int {
 	const radius = 20.0
 	for _, mark := range seaGuideMarks {
-		dx, dz := c.x-mark.x, c.z-mark.z
+		dx, dz := x-mark.x, z-mark.z
 		if dx*dx+dz*dz <= radius*radius {
-			if c.runtime.zoneKnown {
-				zone, ok := sonarZoneForPoint("level_012_north_sea", c.x, c.z)
-				if !ok || zone != c.runtime.zone {
-					return 0
-				}
-			}
 			return mark.spot
 		}
 	}

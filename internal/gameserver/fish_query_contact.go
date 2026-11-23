@@ -115,8 +115,13 @@ func formatFishQueryReply(fishName string, result *FishQueryResponse) string {
 			lines = append(lines, "   "+formatFishQueryRegion(*plan.Region))
 		} else if plan.X != nil && plan.Z != nil {
 			point := fmt.Sprintf("   世界落点 X %.1f / Z %.1f", *plan.X, *plan.Z)
+			if sonarChartLevel(plan.Map) {
+				if spot := seaGuideSpotForPoint(*plan.X, *plan.Z); spot > 0 {
+					point += fmt.Sprintf("（%d米钓点）", spot)
+				}
+			}
 			if plan.Zone > 0 {
-				point += fmt.Sprintf("（海图区%d）", plan.Zone)
+				point += fmt.Sprintf("（声呐区%d）", plan.Zone)
 			}
 			lines = append(lines, point)
 		} else if reference == "" && len(plan.References) > 0 {

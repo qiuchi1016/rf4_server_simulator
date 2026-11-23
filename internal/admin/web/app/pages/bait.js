@@ -103,7 +103,8 @@ function editFish(r, reload) {
         h('div', { class: 'field' }, h('span', { class: 'label', text: '轮换方式' }), segmented([['soft', '宽松'], ['strict', '严格']], st.mode, (v) => { st.mode = v; }),
           h('div', { class: 'help', text: '宽松：其他组的饵也能钓到，只是少。严格：只认当前这组。' }))),
       h('h3', { style: { fontSize: '14px', margin: '22px 0 8px' }, text: '其他' }),
-      h('div', { class: 'field' }, h('label', { text: '前置条件（可选）' }), h('input', { class: 'input', value: st.cond, placeholder: '例如 海图 120 号区域', oninput: (e) => { st.cond = e.target.value.trim(); } })),
+      h('div', { class: 'field' }, h('label', { text: '前置条件（可选）' }), h('input', { class: 'input', value: st.cond, placeholder: '例如 80区', oninput: (e) => { st.cond = e.target.value.trim(); } }),
+        h('div', { class: 'help', text: '挪威海填「80区」表示纸图上的 80 米钓点。按声呐网格限制时填「声呐80区」。' })),
       h('div', { style: { marginTop: '12px' } }, toggleEl({ checked: st.enabled, label: '使用我的设置（关闭则用默认规则）', onChange: (v) => { st.enabled = v; } })),
       habits(r)].filter(Boolean));
   }

@@ -1375,10 +1375,10 @@ func (s *Server) rollFishFromDBWithRules(loc, bait string, gearCapKg float64, bo
 	}
 	// 硬性鱼口资格门（bite_gate_enabled，默认关）：拟饵不喂非掠食鱼、
 	// 天然饵按攻略+生态双票、水层超界只留极小杂口。剔空整杆走
-	// 「本轮无符合条件的鱼」重排。空因写进 c.emptyReason（诊断日志用）。
+	// 「本轮无符合条件的鱼」重排。空因写进 c.audit（诊断日志用）。
 	markEmpty := func(reason string) {
-		if c.emptyReason != nil {
-			*c.emptyReason = reason
+		if c.audit != nil {
+			c.audit.emptyReason = reason
 		}
 	}
 	if gate := s.biteGateConfig(); gate.enabled {
@@ -1543,7 +1543,7 @@ func (s *Server) rollFishFromDBWithRules(loc, bait string, gearCapKg float64, bo
 		// 咬钩落点审计：世界坐标 + 40m 网格 + 命中的区域名册（后台划区对账用）。
 		// resolveFishZone 与 applyFishZoneRoster 同源（缓存复用），纯查不改判鱼结果。
 		s.log.Info("咬钩落点", "鱼种", key, "x", math.Round(c.x), "z", math.Round(c.z),
-			"网格", fishArea(statLoc, c), "区域", zoneHitNote(s.fishZonesFor(cctx, statLoc), c))
+			"网格", fishArea(statLoc, c), "名册区域", zoneHitNote(s.fishZonesFor(cctx, statLoc), c), "海图区号", c.runtime.chartZoneLabel())
 		if s.huntStateEnabled() && c.uid > 0 {
 			s.log.Info("发鱼阶段", "uid", c.uid, "loc", c.loc, "spot", c.spot,
 				"stage", s.fishHuntStageName(huntReady.Mode, huntReady.Stage), "A", roundTo(huntReady.A, 3),
@@ -3135,13 +3135,12 @@ func (s *Server) onRodBiteTimerTicket(uid int64, st *FishState, ticket fishingTi
 	lureSpeed := st.ReelSetting
 	boatOn, boatKnown := st.onBoatLocked(now.Unix())
 	buildRollCtx := func(pity bool) fishRollContext {
-		var reason string
 		return fishRollContext{
 			x: x, z: z, hasPos: hasPos, spot: st.Spot, depthCM: baitDepthCM,
 			lureLayer: lureLayer, lureAction: lureAction, lureMask: lureMask, lureSpeed: lureSpeed, rigType: rigType,
 			onBoat: boatOn, boatKnown: boatKnown, pityEnv: pity,
-			emptyReason: &reason,
-			now:         now, weather: sess.weatherAt(st.Loc, now), happyBite: sess.currentHappyHour().BiteBonus,
+			audit: &fishRollAudit{},
+			now:   now, weather: sess.weatherAt(st.Loc, now), happyBite: sess.currentHappyHour().BiteBonus,
 		}
 	}
 	rollCtx := buildRollCtx(false)
@@ -3151,8 +3150,8 @@ func (s *Server) onRodBiteTimerTicket(uid int64, st *FishState, ticket fishingTi
 		// 保底杂口（bite_gate_pity_rounds，0=关）：连续空杆后放宽环境类因素重掷一次，
 		// 食性硬门不动——泥鳅依然不攻亮片，只是「鱼群不在/水层不对」不再死寂。
 		if pityN := int(s.tunableF("bite_gate_pity_rounds", 0)); pityN > 0 && st.EmptyStreak >= pityN {
-			pityCtx := buildRollCtx(true)
-			if f = s.rollFishForRig(s.dbCtx(), uid, st.GearGuid, st.Loc, st.Bait, st.Bonus, pityCtx); f != nil {
+			rollCtx = buildRollCtx(true)
+			if f = s.rollFishForRig(s.dbCtx(), uid, st.GearGuid, st.Loc, st.Bait, st.Bonus, rollCtx); f != nil {
 				st.EmptyStreak = 0
 				s.log.Info("保底杂口", "rod", shortGUID(st.GearGuid), "鱼种", f.Species, "连续空轮", pityN)
 			}
@@ -3160,15 +3159,20 @@ func (s *Server) onRodBiteTimerTicket(uid int64, st *FishState, ticket fishingTi
 	}
 	if f == nil {
 		// 空轮也带落点、区域命中与空因：后台对账用，不推玩家提示。
-		rollC := fishRollContext{x: x, z: z, hasPos: hasPos}
-		zoneNote := zoneHitNote(s.fishZonesFor(s.dbCtx(), st.Loc), rollC)
-		reason := "概率/权重全零"
-		if rollCtx.emptyReason != nil && *rollCtx.emptyReason != "" {
-			reason = *rollCtx.emptyReason
+		audit := rollCtx.audit
+		rollCtx.runtime = audit.runtime
+		gridLoc := audit.statLoc
+		if gridLoc == "" {
+			gridLoc = st.Loc
+		}
+		zoneNote := zoneHitNote(s.fishZonesFor(s.dbCtx(), audit.statLoc), rollCtx)
+		reason := audit.emptyReason
+		if reason == "" {
+			reason = "概率/权重全零"
 		}
 		s.log.Info("本轮无符合条件的鱼，继续等待", "rod", shortGUID(st.GearGuid), "rig_type", st.RigType,
-			"x", math.Round(x), "z", math.Round(z), "网格", fishArea(st.Loc, rollC), "区域", zoneNote, "空因", reason,
-			"连续空轮", st.EmptyStreak)
+			"x", math.Round(x), "z", math.Round(z), "场景", st.Loc, "网格", fishArea(gridLoc, rollCtx),
+			"名册区域", zoneNote, "海图区号", audit.runtime.chartZoneLabel(), "空因", reason, "连续空轮", st.EmptyStreak)
 		s.emptyWeatherBiteLocked(sess, st, now)
 		st.mu.Unlock()
 		return

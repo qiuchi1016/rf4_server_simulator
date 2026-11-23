@@ -1,8 +1,13 @@
 package gameserver
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"math/rand"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,6 +176,49 @@ func TestFishBaitNoCandidateTimerAndHotReload(t *testing.T) {
 	defer st.cancelBiteTimerLocked()
 	if st.Resolved || st.Pending != nil || st.PushSent || st.biteTimer == nil {
 		t.Fatalf("no-candidate state: resolved=%v pending=%v pushed=%v", st.Resolved, st.Pending, st.PushSent)
+	}
+}
+
+func TestSeaBaitEmptyRollLogsChartAndRosterZone(t *testing.T) {
+	s, db := newStaticRigTestServer(t)
+	setBaitRuleSwitch(t, s, "1")
+	saveZoneForTest(t, db, store.FishZone{
+		Loc: "挪威海", Name: "试钓区", Kind: "sea_zone", SeaZones: []int64{15, 75}, Mode: "exclusive", Enabled: true,
+		Fish: []store.FishZoneFish{
+			{FishKey: "x_gladius", Weight: 1, Enabled: true},
+			{FishKey: "lamna_n", Weight: 1, Enabled: true},
+		},
+	})
+	// 同一款真实 Pilker 在 75 号区能命中剑鱼；15 号区的两种鱼都受海图前置条件约束。
+	const bait = "pilkerlures_2658"
+	control := fishRollContext{loc: "loc12_75", baits: []string{bait}, rigType: 50}
+	s.prepareFishRollRuntime(context.Background(), &control, "挪威海")
+	matched, _ := s.filterFishBaitSet("挪威海", control.baits, []string{"x_gladius", "lamna_n"}, []float64{1, 1}, time.Now(), control)
+	if !slices.Contains(matched, "x_gladius") {
+		t.Fatalf("75号区的 Pilker 应当保留剑鱼，候选为 %v", matched)
+	}
+
+	var log bytes.Buffer
+	s.log = slog.New(slog.NewTextHandler(&log, nil))
+	sess := registerBiteTestSession(t, s, 901, nil)
+	st := s.stateFor(sess.Userid)
+	st.mu.Lock()
+	st.CastActive, st.InWater, st.HasCastPos = true, true, true
+	st.CastPosX, st.CastPosZ = 272, 767
+	st.Loc, st.Bait, st.RigType = "loc12_15", bait, 50
+	st.CastTs = time.Now().Add(-time.Minute)
+	st.mu.Unlock()
+	// 固定首轮鱼口掷骰，使计时器进入真实判鱼链。
+	t.Setenv("GODEBUG", "randseednop=0")
+	rand.Seed(1)
+	s.onBiteTimer(sess.Userid)
+	st.mu.Lock()
+	st.cancelBiteTimerLocked()
+	st.mu.Unlock()
+	for _, field := range []string{"空因=饵料规则（strict）", "场景=loc12_15", "网格=挪威海/6/19", "海图区号=15", "名册区域=试钓区（exclusive）"} {
+		if !strings.Contains(log.String(), field) {
+			t.Errorf("空轮日志缺少 %q：%s", field, log.String())
+		}
 	}
 }
 

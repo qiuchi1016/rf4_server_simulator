@@ -2,6 +2,7 @@ package gameserver
 
 import (
 	"hash/fnv"
+	"strconv"
 	"time"
 )
 
@@ -39,13 +40,18 @@ type fishRollContext struct {
 	// 调用方据此跳过内置鱼池兜底——门拦下的杆就该空竿重排，不能从鱼池
 	// 捞出不属于本图的鱼。指针随值拷贝存活。
 	gateBlocked *bool
-	// emptyReason 记录把候选滤空的那一层（诊断日志用，不进玩家提示）。
-	// 指针随值拷贝存活，与 gateBlocked 同款用法。
-	emptyReason *string
+	// audit 把本次判鱼的位置与空因传回咬钩计时器。
+	audit *fishRollAudit
 	// pityEnv 是保底杂口标记：连续多轮空杆后由咬钩计时器置位，
 	// 只放宽环境类因素（分布散布归零→0.15、水层地板≥0.05），
 	// 食性硬门（G1 拟饵×非掠食鱼、明确禁饵）不放宽。
 	pityEnv bool
+}
+
+type fishRollAudit struct {
+	statLoc     string
+	runtime     *fishRollRuntime
+	emptyReason string
 }
 
 type fishRollRuntime struct {
@@ -62,6 +68,19 @@ type fishRollRuntime struct {
 	spotData   bool
 	// sonarSystemID 是海图声呐档案键（如 loc12_215）；内陆为空。
 	sonarSystemID string
+}
+
+func (r *fishRollRuntime) chartZoneLabel() string {
+	switch {
+	case r == nil:
+		return "未知"
+	case !r.chartKnown:
+		return "无海图"
+	case !r.zoneKnown:
+		return "未知"
+	default:
+		return strconv.Itoa(r.zone)
+	}
 }
 
 func rollContext(contexts []fishRollContext) fishRollContext {

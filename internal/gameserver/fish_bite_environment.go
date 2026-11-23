@@ -96,6 +96,9 @@ func (s *Server) prepareFishRollRuntime(ctx context.Context, c *fishRollContext,
 			}
 		}
 	}
+	if c.audit != nil {
+		*c.audit = fishRollAudit{statLoc: statLoc, runtime: c.runtime}
+	}
 	if c.runtime.spotPref == nil {
 		c.runtime.spotPref, c.runtime.spotData = s.loadFishSpotPreference(ctx, statLoc, c)
 	}

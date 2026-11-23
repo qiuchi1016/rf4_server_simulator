@@ -22,27 +22,51 @@ var seaGuideMarks = []struct {
 	{215, 154, 4252.63, 335.11},
 }
 
-// seaGuideSpotAtRoll 只识别已对照海图和海床高度的中心 20 米范围。
-// 海钓抛竿有时上报局部坐标；与已知声呐矩形冲突时，坑位保持未知。
-func seaGuideSpotAtRoll(c *fishRollContext) int {
-	if !c.hasPos || c.playerPosOnly || !c.runtime.chartKnown {
-		return 0
+const seaGuideRadius = 20.0
+
+// spot 用于渔获观测，只有实际落点才能命中。possible 用于区域限制：
+// nil 表示没有定位证据，非 nil 的空表表示当前位置排除了所有已标定钓点。
+func seaGuideSpotsAtRoll(c *fishRollContext) (spot int, possible []int) {
+	if !c.runtime.chartKnown {
+		return 0, nil
 	}
-	spot := seaGuideSpotForPoint(c.x, c.z)
-	if spot > 0 && c.runtime.zoneKnown {
-		zone, ok := sonarZoneForPoint("level_012_north_sea", c.x, c.z)
-		if !ok || zone != c.runtime.zone {
-			return 0
+	systemID := c.runtime.sonarSystemID
+	if c.hasPos && !c.playerPosOnly {
+		// 没有场景编号时直接使用落点。有编号时先排除局部坐标与世界坐标不一致的情况。
+		consistent := true
+		if systemID != "" {
+			zone, ok := sonarZoneForPoint("level_012_north_sea", c.x, c.z)
+			consistent = ok && c.runtime.zoneKnown && zone == c.runtime.zone
+		}
+		if consistent {
+			if spot := seaGuideSpotForPoint(c.x, c.z); spot > 0 {
+				return spot, []int{spot}
+			}
+			return 0, []int{}
 		}
 	}
-	return spot
+
+	// 只有客户端声呐区号也能排除远处钓点。检查圆与矩形的交集，保留跨界钓点。
+	grids, _ := loadSonarGrids()
+	grid, ok := grids[systemID]
+	if !ok {
+		return 0, nil
+	}
+	possible = []int{}
+	for _, mark := range seaGuideMarks {
+		dx := mark.x - clampFloat(mark.x, grid.topLeftX, grid.topLeftX+grid.width)
+		dz := mark.z - clampFloat(mark.z, grid.topLeftZ-grid.length, grid.topLeftZ)
+		if dx*dx+dz*dz <= seaGuideRadius*seaGuideRadius {
+			possible = append(possible, mark.spot)
+		}
+	}
+	return 0, possible
 }
 
 func seaGuideSpotForPoint(x, z float64) int {
-	const radius = 20.0
 	for _, mark := range seaGuideMarks {
 		dx, dz := x-mark.x, z-mark.z
-		if dx*dx+dz*dz <= radius*radius {
+		if dx*dx+dz*dz <= seaGuideRadius*seaGuideRadius {
 			return mark.spot
 		}
 	}

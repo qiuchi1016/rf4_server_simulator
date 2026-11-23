@@ -96,7 +96,7 @@ func (s *Server) prepareFishRollRuntime(ctx context.Context, c *fishRollContext,
 			}
 		}
 	}
-	c.runtime.guideSpot = seaGuideSpotAtRoll(c)
+	c.runtime.guideSpot, c.runtime.possibleGuideSpots = seaGuideSpotsAtRoll(c)
 	if c.audit != nil {
 		*c.audit = fishRollAudit{statLoc: statLoc, runtime: c.runtime}
 	}

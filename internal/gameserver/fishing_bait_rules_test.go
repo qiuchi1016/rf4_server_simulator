@@ -179,13 +179,13 @@ func TestFishBaitNoCandidateTimerAndHotReload(t *testing.T) {
 	}
 }
 
-func TestSeaGuideSoundingsAllowPilkerBitesAcrossSonarZones(t *testing.T) {
+func TestSwordfishRollRespectsSeaGuideLocation(t *testing.T) {
 	s, db := newStaticRigTestServer(t)
 	setBaitRuleSwitch(t, s, "1")
-	// 复现只有剑鱼（18）和鼠鲨（24）开启的水域权重配置。所有写入均在临时玩家库。
+	// 复现岸边实钓时的全图名册：只启用剑鱼，地点和拟饵须继续筛选。
 	if _, err := db.SQL.Exec(`INSERT INTO fish_weight_override(loc,fish_key,weight,enabled,updated_by,updated_ts)
-		SELECT loc,fish_key,CASE fish_key WHEN 'x_gladius' THEN 18 WHEN 'lamna_n' THEN 24 ELSE 0 END,
-		       fish_key IN ('x_gladius','lamna_n'),'test',0
+		SELECT loc,fish_key,CASE fish_key WHEN 'x_gladius' THEN 1.63 ELSE 0 END,
+		       fish_key='x_gladius','test',0
 		FROM loc_wiki_fish WHERE loc='挪威海'`); err != nil {
 		t.Fatal(err)
 	}
@@ -195,30 +195,39 @@ func TestSeaGuideSoundingsAllowPilkerBitesAcrossSonarZones(t *testing.T) {
 		for _, p := range []struct {
 			loc  string
 			x, z float64
-		}{{"loc12_15", 272, 767}, {"loc12_264", 384, -290}} {
+			want bool
+		}{{"loc12_15", 272, 769, false}, {"loc12_264", 384, -290, false},
+			{"loc12_95", 3921, 1182, true}, {"loc12_252", 3282, -925, true}} {
 			t.Run(p.loc+"/exact="+exact, func(t *testing.T) {
 				rand.Seed(1)
 				c := fishRollContext{
 					hasPos: true, x: p.x, z: p.z, rigType: 50, lureMask: 0x400,
 					forRig: true, biteRoll: func() float64 { return 0 }, now: time.Unix(1795397878, 0),
 				}
-				// 普通模式还可按实钓记录派鼠鲨，固定随机序列验证剑鱼确实能被选中。
-				for range 16 {
-					f := s.rollFishWithRules(p.loc, "pilkerlures_2658", 0, neutralFishingSkillBonus(), c)
-					if f == nil {
-						t.Fatal("Pilker №2-800 RD 在挪威海被判空轮")
-					}
-					if f.Species == "x_gladius" {
-						return
-					}
-					if f.Species != "lamna_n" {
-						t.Fatalf("派出已关闭的鱼种 %q", f.Species)
-					}
+				f := s.rollFishWithRules(p.loc, "pilkerlures_2658", 0, neutralFishingSkillBonus(), c)
+				if (f != nil) != p.want || (f != nil && f.Species != "x_gladius") {
+					t.Fatalf("落点 (%.0f,%.0f) 应派剑鱼=%t，实际=%+v", p.x, p.z, p.want, f)
 				}
-				t.Fatal("Pilker №2-800 RD 未派出剑鱼")
 			})
 		}
 	}
+	t.Run("岸边实钓设置", func(t *testing.T) {
+		setWeatherTestTunable(t, s, "bait_exact_only", "0")
+		for _, key := range []string{"bite_gate_enabled", "fish_ecology_enabled", "fish_weather_enabled", "fish_distribution_enabled", "happy_hour_enabled"} {
+			setWeatherTestTunable(t, s, key, "1")
+		}
+		for _, pity := range []bool{false, true} {
+			c := fishRollContext{
+				x: 272, z: 769, hasPos: true, rigType: 50, lureLayer: .91, lureMask: 0x400000,
+				forRig: true, pityEnv: pity, now: time.Date(2026, 11, 23, 4, 26, 50, 0, time.UTC),
+				biteRoll: func() float64 { return 0 }, audit: &fishRollAudit{},
+			}
+			f := s.rollFishWithRules("loc12_15", "pilkerlures_2658", 0, neutralFishingSkillBonus(), c)
+			if f != nil || c.audit.emptyReason != "饵料规则（strict）" {
+				t.Errorf("岸边保底=%t，鱼=%+v，空因=%s", pity, f, c.audit.emptyReason)
+			}
+		}
+	})
 }
 
 func TestSeaBaitEmptyRollLogsChartAndRosterZone(t *testing.T) {
@@ -265,7 +274,7 @@ func TestSeaBaitEmptyRollLogsChartAndRosterZone(t *testing.T) {
 	st.mu.Lock()
 	st.cancelBiteTimerLocked()
 	st.mu.Unlock()
-	for _, field := range []string{"空因=饵料规则（strict）", "场景=loc12_15", "网格=挪威海/6/19", "海图区号=15", "攻略标深=未知", "名册区域=试钓区（exclusive）"} {
+	for _, field := range []string{"空因=饵料规则（strict）", "场景=loc12_15", "网格=挪威海/6/19", "海图区号=15", "攻略标深=标注范围外", "名册区域=试钓区（exclusive）"} {
 		if !strings.Contains(log.String(), field) {
 			t.Errorf("空轮日志缺少 %q：%s", field, log.String())
 		}
@@ -370,7 +379,8 @@ func TestRuleConditionAllowsChartZoneAndMotionEvidence(t *testing.T) {
 		{"海图75标注", "loc12_95", 3921, 1182, true},
 		{"海图80标注", "loc12_252", 3282, -925, true},
 		{"海图120标注", "loc12_170", 4258, 6, false},
-		{"同一声呐水域的其他采样格", "loc12_170", 4235, 6, true},
+		{"同一声呐水域的其他采样格", "loc12_170", 4235, 6, false},
+		{"80米标注同区但已在标注范围外", "loc12_252", 3310, -925, false},
 		{"落点和所报声呐水域不一致", "loc12_95", 4258, 6, true},
 	} {
 		c := fishRollContext{loc: tc.scene, x: tc.x, z: tc.z, hasPos: true}
@@ -379,11 +389,19 @@ func TestRuleConditionAllowsChartZoneAndMotionEvidence(t *testing.T) {
 			t.Errorf("%s：海图75或80的前置条件 got=%t want=%t", tc.name, got, tc.want)
 		}
 	}
-	if !ruleConditionAllows(zoneRule, inSea(170, true)) {
-		t.Fatal("只有声呐水域号，没有采样格证据时应保持中性")
-	}
-	if !ruleConditionAllows(zoneRule, inSea(15, true)) {
-		t.Fatal("声呐水域 15 没有确认的海图钓点，应保持中性")
+	for _, tc := range []struct {
+		loc  string
+		spot int
+		want bool
+	}{
+		{"loc12_15", 80, false}, {"loc12_170", 75, false}, {"loc12_252", 80, true},
+		{"loc12_244", 41, true}, // 41米标注的中心在258区，20米圆跨过244区边界。
+	} {
+		c := fishRollContext{loc: tc.loc}
+		s.prepareFishRollRuntime(t.Context(), &c, "挪威海")
+		if got := ruleConditionAllows(fishBaitRule{chartZones: []int{tc.spot}}, c); got != tc.want {
+			t.Errorf("仅上报 %s 时，%d米钓点：得到%t，期望%t", tc.loc, tc.spot, got, tc.want)
+		}
 	}
 	if !ruleConditionAllows(zoneRule, inSea(0, false)) {
 		t.Fatal("落点定位不到区号时应保持中性")

@@ -750,7 +750,13 @@ func ruleConditionAllows(r fishBaitRule, c fishRollContext) bool {
 		if !c.runtime.chartKnown {
 			return false
 		}
-		guideAllowed := len(r.chartZones) > 0 && (c.runtime.guideSpot == 0 || slices.Contains(r.chartZones, c.runtime.guideSpot))
+		guideAllowed := len(r.chartZones) > 0 && c.runtime.possibleGuideSpots == nil
+		for _, spot := range c.runtime.possibleGuideSpots {
+			if slices.Contains(r.chartZones, spot) {
+				guideAllowed = true
+				break
+			}
+		}
 		sonarAllowed := len(r.sonarZones) > 0 && (!c.runtime.zoneKnown || slices.Contains(r.sonarZones, c.runtime.zone))
 		if !r.chartAny && !guideAllowed && !sonarAllowed {
 			return false

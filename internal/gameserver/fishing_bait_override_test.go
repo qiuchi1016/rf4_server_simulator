@@ -19,13 +19,13 @@ func TestBaitOverrideRoundTripsSeaGuideCondition(t *testing.T) {
 		name, condition                string
 		at80, at75, at120, atUnknown80 bool
 	}{
-		{"只编辑内置规则的饵", info.Condition, true, true, false, true},
-		{"玩家填写的钓点", "80区", true, false, false, true},
-		{"多个纸图钓点", "75或80区", true, true, false, true},
-		{"旧版无标记条件", "海图80号区域", true, false, false, true},
-		{"已保存的标深说明", "海图80号区域（纸图标深）", true, false, false, true},
+		{"只编辑内置规则的饵", info.Condition, true, true, false, false},
+		{"玩家填写的钓点", "80区", true, false, false, false},
+		{"多个纸图钓点", "75或80区", true, true, false, false},
+		{"旧版无标记条件", "海图80号区域", true, false, false, false},
+		{"已保存的标深说明", "海图80号区域（纸图标深）", true, false, false, false},
 		{"明确指定声呐网格", "声呐252区", true, false, false, false},
-		{"仅带有声呐前缀的编号使用网格", "80区或声呐第170区", true, false, true, true},
+		{"仅带有声呐前缀的编号使用网格", "80区或声呐第170区", true, false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ov := store.FishBaitOverride{FishZh: "剑鱼", Allow: []string{"Hunter 1000-1"}, Deny: info.Deny,

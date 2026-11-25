@@ -505,6 +505,9 @@ func (s *Server) settleExtraOnReelIn(sess *Session, ctx context.Context, uid int
 				"fish", shortGUID(f.FishGUID), "鱼种", f.Species, "重量_g", f.WeightG)
 			continue
 		}
+		if !res.replayed {
+			s.notifyFishLanded(sess, f, res.isRecord)
+		}
 		settled = append(settled, f)
 		results = append(results, res)
 	}

@@ -3451,13 +3451,19 @@ func (s *Server) notifyFishLanded(sess *Session, f *RolledFish, newRecord bool) 
 	// 管理员显式设置 fish_tv_kv=0 时退化为普通系统文本播报，避免客户端
 	// 解析模板缺参导致断连。
 	kind := fishAnnouncementKind(f.Grade)
-	if kind != 0 && s.tunableF("fish_tv_kv", 1) != 0 {
-		sess.pushChatProbe(27, kind, "", s.fishLandedKV(f))
+	if kind == 0 {
 		return
 	}
-	if text := s.fishLandedText(f, newRecord); text != "" {
-		sess.pushSystemChat(text)
+	channel := 27
+	var text string
+	var kv *proto.Value
+	if s.tunableF("fish_tv_kv", 1) != 0 {
+		kv = s.fishLandedKV(f)
+	} else {
+		channel, kind = s.systemChatFormat()
+		text = s.fishLandedText(f, newRecord)
 	}
+	sess.pushChatProbeTo(s.publicChatSessions(), channel, kind, text, kv)
 }
 
 // notifyFishKept 入护播报已永久停用：结算卡已经展示入护结果，

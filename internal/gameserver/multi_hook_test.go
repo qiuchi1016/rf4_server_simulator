@@ -297,6 +297,37 @@ func TestReelInWithoutHookDropsExtras(t *testing.T) {
 	}
 }
 
+func TestMultiHookReelInAnnouncesExtraCatchOnce(t *testing.T) {
+	s, db := newRigTestServer(t)
+	setMultiHookTunableForTest(t, s, "fish_tv_kv", 0)
+	angler := newProbeSess(s)
+	if _, err := db.EnsureProfile(t.Context(), angler.Userid); err != nil {
+		t.Fatal(err)
+	}
+	friend, peer := newTunnelProbe(t, s)
+	friend.Userid = angler.Userid + 1
+	s.sessions[angler.ID], s.sessions[friend.ID] = angler, friend
+	chat := collectHookedChat(peer)
+
+	st := s.stateFor(angler.Userid)
+	st.Pending = &RolledFish{FishGUID: newFishGUID(), Species: "perch", Grade: 1, WeightG: 120}
+	st.Hooked = true
+	st.Extra = []*RolledFish{
+		{FishGUID: newFishGUID(), Species: "perch", Grade: 1, WeightG: 200},
+		{FishGUID: newFishGUID(), Species: "perch", Grade: 2, WeightG: 640},
+	}
+	for i := 0; i < 2; i++ {
+		body, ok := s.fishingEndSettle(&Ctx{Sess: angler, CallID: 1, Main: 14, Sub: 4,
+			ExpectResponse: true, Log: logging.Discard()})
+		if !ok || len(body) == 0 {
+			t.Fatal("14/4 结算未正常返回")
+		}
+	}
+	if got := finishHookedChat(t, friend, chat); len(got) != 1 || !strings.Contains(got[0], "640g") {
+		t.Fatalf("两次收竿后公聊应仅见一条 640g 额外鱼播报，实得 %v", got)
+	}
+}
+
 // 额外鱼的实体必须等到主鱼刺鱼确认之后再派。
 //
 // 实机 2026-11-13 16:38：三条鱼同时在咬口阶段收到 14/14，客户端只对主鱼回了

@@ -348,6 +348,7 @@ func TestFishLandedFallsBackToPlainChatWithoutKV(t *testing.T) {
 	srv.tunMu.Unlock()
 	sess, gc := newTunnelProbe(t, srv)
 
+	srv.sessions[sess.ID] = sess
 	srv.notifyFishLanded(sess, &RolledFish{Species: "g_tench", Grade: 3, WeightG: 4100}, false)
 
 	env := awaitPushEnvelope(t, gc)

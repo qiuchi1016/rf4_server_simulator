@@ -339,9 +339,12 @@ func (s *Session) pushSystemChat(text string) {
 	if s == nil || s.closed.Load() {
 		return
 	}
-	channel := int(s.Srv.tunableF("fish_tv_channel", 27))
-	kind := int(s.Srv.tunableF("fish_tv_kind", 0))
+	channel, kind := s.Srv.systemChatFormat()
 	s.pushChatProbe(channel, kind, text, nil)
+}
+
+func (s *Server) systemChatFormat() (channel, kind int) {
+	return int(s.tunableF("fish_tv_channel", 27)), int(s.tunableF("fish_tv_kind", 0))
 }
 
 // pushChatProbe 经指定聊天推送通道/消息类型发送文本。
@@ -352,6 +355,11 @@ func (s *Session) pushChatProbe(channel, kind int, text string, kv *proto.Value)
 	if s == nil || s.closed.Load() {
 		return
 	}
+	s.pushChatProbeTo([]*Session{s}, channel, kind, text, kv)
+}
+
+// 所有接收者共用发送者的消息，保留钓手身份、模板参数和时间。
+func (s *Session) pushChatProbeTo(peers []*Session, channel, kind int, text string, kv *proto.Value) {
 	f2 := uint32(s.Userid)
 	// 探测专用外层覆盖：str 槽默认频道名、u32 槽默认人数。
 	outerStr := ""
@@ -391,10 +399,7 @@ func (s *Session) pushChatProbe(channel, kind int, text string, kv *proto.Value)
 		outerStr, outerU32, haveOuter, outerEmpty = "", 0, true, true
 	}
 	ch := sessChannel(s)
-	users := ch.Users
-	if users < 1 {
-		users = 1
-	}
+	users := max(ch.Users, int64(len(peers)), 1)
 	f4 := proto.Null()
 	if kv != nil {
 		f4 = kv
@@ -406,12 +411,13 @@ func (s *Session) pushChatProbe(channel, kind int, text string, kv *proto.Value)
 		3: proto.U64(uint64(proto.WindowsFiletimeNow())),
 		4: f4,
 	})
+	var body *proto.Value
 	switch channel {
 	case 28, 29:
 		// 形状未抓样（合同为通配）：按 [消息, 频道名] 试探。
-		s.Push(24, uint8(channel), proto.Args524(msgObj, proto.StrVal(ch.Name)))
+		body = proto.Args524(msgObj, proto.StrVal(ch.Name))
 	case 30, 31:
-		s.Push(24, uint8(channel), proto.Args524(msgObj))
+		body = proto.Args524(msgObj)
 	default: // 27 及一切未知值回退到公聊回显形状
 		// 外层 locationId 必须与客户端当前频道的名字严格相等才会被接受
 		// （Assembly-CSharp ibopligjjbo.peilhchjenn 实证，2026-11-04 面板
@@ -426,7 +432,11 @@ func (s *Session) pushChatProbe(channel, kind int, text string, kv *proto.Value)
 			}
 			u3 = proto.U32(outerU32)
 		}
-		s.Push(24, 27, proto.Args524(msgObj, str2, u3))
+		channel = 27
+		body = proto.Args524(msgObj, str2, u3)
+	}
+	for _, peer := range peers {
+		peer.Push(24, uint8(channel), body)
 	}
 }
 
@@ -757,16 +767,7 @@ func hSocialPublic(ctx *Ctx) ([]byte, bool) {
 	if users < 1 {
 		users = 1
 	}
-	// 公聊广播给所有在线会话；只回显发送者会导致多人频道互相看不到。
-	srv := ctx.Sess.Srv
-	srv.mu.Lock()
-	peers := make([]*Session, 0, len(srv.sessions))
-	for _, sess := range srv.sessions {
-		if sess != nil && !sess.Closed() {
-			peers = append(peers, sess)
-		}
-	}
-	srv.mu.Unlock()
+	peers := ctx.Sess.Srv.publicChatSessions()
 	if int64(len(peers)) > users {
 		users = int64(len(peers))
 	}
@@ -774,6 +775,18 @@ func hSocialPublic(ctx *Ctx) ([]byte, bool) {
 		sess.Push(24, 27, buildChatEchoPush(loc, msg, uint64(ctx.Sess.Userid), uint32(users)))
 	}
 	return nil, true // fire-and-forget，不返回响应
+}
+
+func (srv *Server) publicChatSessions() []*Session {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	peers := make([]*Session, 0, len(srv.sessions))
+	for _, sess := range srv.sessions {
+		if sess != nil && !sess.Closed() {
+			peers = append(peers, sess)
+		}
+	}
+	return peers
 }
 
 // ---------------------------------------------------------------------------

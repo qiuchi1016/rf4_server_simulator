@@ -54,3 +54,17 @@ go test ./internal/gameserver -run '^TestFishQuery' -count=1
 ```
 
 实际地图生成结果和离线查询复算不等于逐图实机验收。游戏内发送“帮助”可查看五点水陆粗筛的规则和限制；常规查询不重复说明，也不宣称全格为水或可达。
+
+## 图一抛竿点水深表
+
+图一（克马羚诺也湖，`level_001_lake`）的浮钓判层另用一份本地水深表。它沿用上述水体触发范围和地形采样规则，在客户端原生高度网格上记录基准水面到水底的距离。当前图一每轴 2049 个采样点，相邻点相距 0.29296875 米，水深按毫米保存。服务端对抛竿世界坐标 X/Z 做双线性插值。四个角只要有一处为陆地或缺数据，该位置的水深就返回未知。波浪、物件碰撞和实时水位变化未纳入估算。
+
+从仓库根目录执行下列 PowerShell 命令。将输出路径指定到游戏服务工作目录下已有的 `data` 目录。脚本会在生成完整水深表后替换同名文件。
+
+```powershell
+uv run --with UnityPy==1.25.4 --with numpy python tools/cast_water_depth.py --client-data '<客户端目录>/rf4_x64_Data' --output data/cast_water_depth.json
+$env:RF4_TEST_CAST_WATER_DEPTH_FILE = (Resolve-Path data/cast_water_depth.json).Path
+go test ./internal/gameserver -run '^(TestCastWaterDepthInterpolation|TestLocalCastWaterDepthGeneratedLake)$' -count=1 -v
+```
+
+默认从工作目录的 `data/cast_water_depth.json` 首次加载并缓存；运行游戏服务时也可用 `RF4_CAST_WATER_DEPTH_FILE` 指定绝对路径。更换表后重启服务才会加载新数据。图一场景改变后应重新生成，并核对上述测试使用的三个世界坐标。本地生成的水深文件保留在已忽略的 `data/` 中。其他地图、文件缺失或格式错误时均返回未知水深。

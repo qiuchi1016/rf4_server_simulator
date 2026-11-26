@@ -2,6 +2,7 @@ package gameserver
 
 import (
 	"context"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -104,7 +105,7 @@ func TestBiteGateLayerFloor(t *testing.T) {
 		t.Fatalf("perch at surface must hit floor, got %v", w)
 	}
 	// 泥鳅（v4.1 带 0.525~0.975）浮钓近底（400cm→0.8）：带内不受影响。
-	if w := run(fishRollContext{rigType: 1, depthCM: 400, baits: []string{"rule_worm"}, now: time.Now()}, "vjun"); w != 1 {
+	if w := run(fishRollContext{rigType: 1, depthCM: 400, measuredWaterDepthM: 5, baits: []string{"rule_worm"}, now: time.Now()}, "vjun"); w != 1 {
 		t.Fatalf("loach near bottom must keep full weight, got %v", w)
 	}
 	// 底钓（0.93）对鲤科/底栖带鱼零误伤：鲫鱼带 0.54~0.98 在容差内。
@@ -112,6 +113,51 @@ func TestBiteGateLayerFloor(t *testing.T) {
 	// 不该被底钓钓起，正是 G2 的设计语义。
 	if w := run(fishRollContext{rigType: 12, baits: []string{"rule_worm"}, now: time.Now()}, "crucian"); w != 1 {
 		t.Fatalf("crucian on bottom rig must keep full weight, got %v", w)
+	}
+}
+
+func TestFloatBiteGateWeightsAcrossMeasuredWaterLayers(t *testing.T) {
+	s := &Server{}
+	weight := func(c fishRollContext, species string, floor float64) float64 {
+		t.Helper()
+		keys, w := s.applyBiteGates(context.Background(), []string{species}, []float64{1}, c,
+			biteGateConfig{enabled: true, layerFloor: floor}, "")
+		if len(keys) != 1 {
+			t.Fatalf("expected %s in weighted pool, got %v", species, keys)
+		}
+		return w[0]
+	}
+	// 18cm reaches the golden crucian's band (0.52–0.96) in a 30cm column.
+	c := fishRollContext{rigType: 1, depthCM: 18, measuredWaterDepthM: .3}
+	if got := weight(c, "c.carp", .01); got != 1 {
+		t.Errorf("shallow landing: weight=%g want 1", got)
+	}
+	c.measuredWaterDepthM = 5
+	if got := weight(c, "c.carp", .08); got != .08 {
+		t.Errorf("far outside habitat: weight=%g want configured .08", got)
+	}
+	// The old G2 step for this species was at 185cm in a 5m column.
+	c.depthCM = 184
+	left := weight(c, "c.carp", .01)
+	c.depthCM = 186
+	right := weight(c, "c.carp", .01)
+	if !(left > .01 && left < right && right < 1 && right-left < .04) {
+		t.Errorf("weights near shallow edge: %g and %g", left, right)
+	}
+	// Test the deep side of ide's band (ends at 0.625) as well.
+	c.depthCM = 387
+	left = weight(c, "s.orfe", .01)
+	c.depthCM = 388
+	right = weight(c, "s.orfe", .01)
+	if !(right > .01 && right < left && left < 1 && left-right < .04) {
+		t.Errorf("weights near deep edge: %g and %g", left, right)
+	}
+	c.depthCM = 18
+	for _, waterM := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		c.measuredWaterDepthM = waterM
+		if got := weight(c, "c.carp", .01); got != 1 {
+			t.Errorf("unknown depth %g: weight=%g want 1", waterM, got)
+		}
 	}
 }
 

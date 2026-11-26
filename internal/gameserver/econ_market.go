@@ -1985,14 +1985,20 @@ func hRodSetDepth(ctx *Ctx) ([]byte, bool) {
 			return nil, true
 		}
 	}
-	st := srv.fishingStateForRequest(ctx)
+	st := srv.fishingStateForRod(ctx.Sess.Userid, rodGUID)
 	st.mu.Lock()
+	if srv.DB != nil {
+		// 归属初检不能代替锁内重读：取竿/备抛可能刚刚修复了 f5。
+		row = srv.ownedRodRow(ctx.Sess.pushCtx(), ctx.Sess.Userid, rodGUID)
+		if row == nil || !srv.rodRigSetDepthRow(ctx.Sess.pushCtx(), row, depthCM) {
+			st.mu.Unlock()
+			ctx.Log.Warn("17/12 竿钓深写入失败", "竿", shortGUID(rodGUID))
+			return nil, true
+		}
+	}
 	st.DepthCM = depthCM
 	st.mu.Unlock()
 	ctx.Log.Info("17/12 设置钓深", "竿", shortGUID(rodGUID), "深度cm", depthCM)
-	if row != nil && !srv.rodRigSetDepthRow(ctx.Sess.pushCtx(), row, depthCM) {
-		ctx.Log.Info("17/12 竿实例无钓组字段，仅记会话深度", "竿", shortGUID(rodGUID))
-	}
 	return nil, true
 }
 
@@ -2209,8 +2215,7 @@ func (s *Server) rodRigSetDepthRow(ctx context.Context, row *store.Item, depthCM
 	}
 	fields[idx].Op = "VAL"
 	fields[idx].Val = buildRig153Like(stored, name, curType, comps, depthCM, rigClipOf(stored))
-	s.saveItemFields(ctx, row, fields)
-	return true
+	return s.saveItemFields(ctx, row, fields) == nil
 }
 
 // ---------------------------------------------------------------------------

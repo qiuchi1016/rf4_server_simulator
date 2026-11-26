@@ -178,9 +178,7 @@ class Scene:
                 raise ValueError('Unexpected water controller tail')
         return controlled
 
-    def terrain_heights(self, points):
-        values = np.full(len(points),-np.inf)
-        count = 0
+    def terrain_grids(self):
         for obj in self.objects:
             if obj.type.name != 'Terrain':
                 continue
@@ -199,7 +197,13 @@ class Scene:
             if not np.allclose([heights.min()/32766,heights.max()/32766],[patches.min(),patches.max()],rtol=0,atol=2e-7):
                 raise ValueError('Unrecognized terrain height encoding')
             heights /= 32766
-            values = np.maximum(values,sample_heights(heights,matrix[:3,3],data['m_Scale'],points))
+            yield heights, matrix[:3,3], data['m_Scale']
+
+    def terrain_heights(self, points):
+        values = np.full(len(points),-np.inf)
+        count = 0
+        for heights,origin,scale in self.terrain_grids():
+            values = np.maximum(values,sample_heights(heights,origin,scale,points))
             count += 1
         if not count or not np.isfinite(values).all():
             raise ValueError('Some sample points lack terrain coverage')

@@ -716,13 +716,13 @@ func bumpCreatedTicks(fields []proto.Field, wireClass string) {
 }
 
 // saveItemFields 写回字段数组并提高版本戳；其余物品列保持不变。
-func (s *Server) saveItemFields(ctx context.Context, row *store.Item, fields []proto.Field) {
+func (s *Server) saveItemFields(ctx context.Context, row *store.Item, fields []proto.Field) error {
 	bumpCreatedTicks(fields, row.WireClass)
 	fj, err := FieldsToJSON(fields)
 	if err != nil {
-		return
+		return err
 	}
-	_ = s.DB.UpdateItemFields(ctx, row.GUID, fj, row.Qty, row.Durability, row.Workmanship, row.RigGUID)
+	return s.DB.UpdateItemFields(ctx, row.GUID, fj, row.Qty, row.Durability, row.Workmanship, row.RigGUID)
 }
 
 // BackfillRigProjections 以竿实例的 f5/f3/f4 为真源，重建全部 rig_component 派生行。
@@ -2786,6 +2786,53 @@ func guidOrZero(h string) string {
 	return h
 }
 
+// prepareCastRodLocked 在同一把竿锁内保留旧档钓深、校正钓组，再取最终的鱼层输入。
+// 17/12 也持此锁写 f5。尖梢更新的 4/22 必须由调用方在解锁后推送。
+func (s *Server) prepareCastRodLocked(ctx *Ctx, st *FishState, gear string) (row *store.Item, tipRepaired bool, err error) {
+	dbCtx := ctx.Sess.pushCtx()
+	row, err = s.DB.GetItemByGUID(dbCtx, gear)
+	if err != nil || row == nil || row.Durability <= 0 {
+		return row, false, err
+	}
+	if category, ok := s.itemCategoryOf(dbCtx, row); row.UID != ctx.Sess.Userid || !ok || category != gearCatRod {
+		st.RigType = s.rigTypeOfItem(dbCtx, row)
+		return row, false, nil
+	}
+	if st.DepthCM > 0 && floatRigTypes[s.defaultRigTypeForRod(dbCtx, row.ItemID)] {
+		if depth, ok := storedRodDepth(row); ok && depth == 0 {
+			// 旧库只有每竿快照保存过钓深，ensureRig 创建默认 f5 前先补回。
+			if !s.rodRigSetDepthRow(dbCtx, row, st.DepthCM) {
+				ctx.Log.Warn("旧档钓深未能写回竿实例", "竿", shortGUID(gear))
+			}
+		}
+	}
+	tipRepaired = s.ensureRig(dbCtx, ctx.Sess.Userid, gear)
+	row, err = s.DB.GetItemByGUID(dbCtx, gear)
+	if err != nil || row == nil {
+		return row, tipRepaired, err
+	}
+	st.RigType = s.rigTypeOfItem(dbCtx, row)
+	if floatRigTypes[st.RigType] {
+		if depth, ok := storedRodDepth(row); ok {
+			if depth > 0 {
+				st.DepthCM = depth
+			} else if st.DepthCM <= 0 {
+				st.DepthCM = defaultRigDepthCM
+			}
+		}
+	}
+	return row, tipRepaired, nil
+}
+
+func storedRodDepth(row *store.Item) (int64, bool) {
+	fields, err := FieldsFromJSON(row.FieldsJSON)
+	idx := fieldIdxByCS(row.WireClass, csRigObject)
+	if err != nil || idx < 0 || idx >= len(fields) {
+		return 0, false
+	}
+	return rigDepthOf(fields[idx].Val, 0), true
+}
+
 // hRodTake 处理 17/7，将指定竿拿到手上并返回 158 手持上下文。
 // 请求参数是竿 GUID。会话中的 gear_guid 必须同步更新，后续 14/1、14/2 依赖它。
 func hRodTake(ctx *Ctx) ([]byte, bool) {
@@ -2846,20 +2893,18 @@ func hRodTake(ctx *Ctx) ([]byte, bool) {
 		}
 		return nil, false
 	}
-	// 同步建档和尖梢收敛；新竿的尖梢补齐后立即推送完整竿树。
-	if srv.ensureRig(ctx.Sess.pushCtx(), ctx.Sess.Userid, gear) {
-		ctx.Sess.Push4_22Full()
-	}
-	// 每次换竿都读取该竿的钓组，不能沿用上一根竿的浮钓/路亚类型。
-	row, err = srv.DB.GetItemByGUID(ctx.Sess.pushCtx(), gear)
+	// 先读取本竿的钓深，再补旧竿的默认钓组，避免丢失旧快照上的设置。
+	st.mu.Lock()
+	row, tipRepaired, err := srv.prepareCastRodLocked(ctx, st, gear)
+	depthCM, rigType = st.DepthCM, st.RigType
+	st.mu.Unlock()
 	if err != nil || row == nil {
 		ctx.ReplyFailure("System.IO.IOException", "鱼竿状态未能读取，请重试")
 		return nil, true
 	}
-	rigType = srv.rigTypeOfItem(ctx.Sess.pushCtx(), row)
-	st.mu.Lock()
-	st.RigType = rigType
-	st.mu.Unlock()
+	if tipRepaired {
+		ctx.Sess.Push4_22Full()
+	}
 	body := castReady158(ctx, gear, depthCM, rigType)
 	if body == nil {
 		return nil, false

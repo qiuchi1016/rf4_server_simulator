@@ -267,23 +267,26 @@ func effectiveLureLayer(c fishRollContext) float64 {
 	return .5
 }
 
-func (s *Server) rigWaterLayer(c fishRollContext) float64 {
+// rigWaterLayer 返回饵从水面（0）到水底（1）的相对位置。浮钓需要有效饵深与落点水深。
+func (s *Server) rigWaterLayer(c fishRollContext) (float64, bool) {
+	if floatRigTypes[c.rigType] {
+		if c.depthCM <= 0 || !(c.measuredWaterDepthM > 0) || math.IsInf(c.measuredWaterDepthM, 1) {
+			return 0, false
+		}
+		return normalizeWaterLayer(float64(c.depthCM) / 100 / c.measuredWaterDepthM), true
+	}
 	if bottomRigTypes[c.rigType] {
-		return .93
+		return .93, true
 	}
 	if rigTypeLureFamily[c.rigType] {
 		// 无运动证据时按饵的名义泳层兜底，而不是一律中层 .5——水面系饵
 		// 刚入水还没上报动作时按 .5 判鱼会错过表层掠食鱼。
-		return effectiveLureLayer(c)
+		return effectiveLureLayer(c), true
 	}
 	if c.depthCM > 0 {
-		// 浮钓保持旧的 5m 满刻度：区域查询的批量/逐点天气权重必须有
-		// 与点位无关的水层口径；按 spotEnv 实际水深归一会让同一张图的
-		// 不同落点算出不同水温/光照，批量捕获无法与逐点生产权重对上
-		// （TestFishQueryRegionCaptureMatchesPointCalculation）。评审 P2-2 回退。
-		return normalizeWaterLayer(float64(c.depthCM) / 500)
+		return normalizeWaterLayer(float64(c.depthCM) / 500), true
 	}
-	return .45
+	return .45, true
 }
 
 // fishLayerWeight 按当前钓法水层与鱼种范围计算软匹配权重。
@@ -302,16 +305,20 @@ func (s *Server) fishLayerWeight(ctx context.Context, key string, c fishRollCont
 // 与"路亚比鱼深"两个方向，水面饵打底层鱼只走高斯尾巴（v4 区间收窄后
 // 仍有 ~0.27），是水面系上底鱼的根因之一；对称化后衰减与方向无关。
 func (s *Server) fishLayerWeightProfile(p fishEcologyProfile, c fishRollContext) float64 {
-	target := s.rigWaterLayer(c)
-	lo, hi := p.LayerMin, p.LayerMax
-	if target >= lo-.08 && target <= hi+.08 {
-		half := math.Max(.08, (hi-lo)/2)
-		z := (target - p.LayerPref) / half
-		return math.Max(.75, .12+.88*math.Exp(-.5*z*z))
+	target, known := s.rigWaterLayer(c)
+	if !known {
+		return 1
 	}
-	half := math.Max(.08, (hi-lo)/2)
-	out := math.Max(lo-.08-target, target-hi-.08) / half
-	return math.Max(.02, .75*math.Exp(-2*out))
+	half := math.Max(.08, (p.LayerMax-p.LayerMin)/2)
+	edge := clampFloat(target, p.LayerMin-.08, p.LayerMax+.08)
+	out := math.Abs(target-edge) / half
+	weight := .75
+	if out == 0 || floatRigTypes[c.rigType] {
+		// 浮钓从最近边界的实际权重开始衰减。偏好靠近区间一端时也能平滑过渡。
+		z := (edge - p.LayerPref) / half
+		weight = math.Max(.75, .12+.88*math.Exp(-.5*z*z))
+	}
+	return math.Max(.02, weight*math.Exp(-2*out))
 }
 
 func (s *Server) fishBiteEnvironmentWeight(ctx context.Context, key string, c fishRollContext) float64 {

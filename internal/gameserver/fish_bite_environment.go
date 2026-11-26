@@ -54,13 +54,13 @@ type lureAttributes struct {
 // 海图区号随之定位不到，“海图”前置条件整体失效。场景名必须先用 loc_alias 解析，
 // 与 cafe_orders、econ_market、fishing_weather_context 一致；解析不出来再回退。
 func (s *Server) resolveRollLevelKey(ctx context.Context, loc string) string {
-	if s == nil || s.DB == nil || loc == "" {
-		return travelLevelKey(loc)
+	if s != nil && s.DB != nil {
+		loc = s.DB.ResolveLevelKey(ctx, loc)
 	}
-	if key := s.DB.ResolveLevelKey(ctx, loc); key != "" {
-		return travelLevelKey(key)
+	if validLevelKey(loc) {
+		return loc
 	}
-	return travelLevelKey(loc)
+	return ""
 }
 
 func (s *Server) prepareFishRollRuntime(ctx context.Context, c *fishRollContext, statLoc string) {
@@ -80,6 +80,7 @@ func (s *Server) prepareFishRollRuntime(ctx context.Context, c *fishRollContext,
 	if !c.runtime.levelChecked {
 		c.runtime.levelChecked = true
 		levelKey := s.resolveRollLevelKey(ctx, c.loc)
+		c.runtime.levelKey = levelKey
 		c.runtime.chartKnown = sonarChartLevel(levelKey)
 		if c.runtime.chartKnown && c.hasPos && !c.playerPosOnly {
 			c.runtime.guideSpot = seaGuideSpotForPoint(c.x, c.z)
@@ -88,6 +89,14 @@ func (s *Server) prepareFishRollRuntime(ctx context.Context, c *fishRollContext,
 				c.runtime.sonarSystemID = fmt.Sprintf("loc12_%02d", c.runtime.zone)
 			}
 		}
+	}
+	c.measuredWaterDepthM = 0
+	if floatRigTypes[c.rigType] {
+		// 只有饵的具体落点能查水深；区域估算和人物站位没有这项信息。
+		if c.hasPos && !c.playerPosOnly && (c.query == nil || !c.query.regional) {
+			c.measuredWaterDepthM, _ = localCastWaterDepthM(c.runtime.levelKey, c.x, c.z)
+		}
+		c.spotEnv.DepthM = c.measuredWaterDepthM
 	}
 	if c.audit != nil {
 		*c.audit = fishRollAudit{statLoc: statLoc, runtime: c.runtime}
@@ -538,9 +547,12 @@ func fishWaterConditionsFor(profile fishEcologyProfile, c fishRollContext) fishW
 	case rigTypeLureFamily[c.rigType]:
 		layer = effectiveLureLayer(c)
 	case c.depthCM > 0:
-		// 与 rigWaterLayer 同口径保持 5m 满刻度；实际水深归一会让区域
-		// 批量捕获与逐点生产权重对不上（评审 P2-2 回退）。
-		layer = normalizeWaterLayer(float64(c.depthCM) / 500)
+		// 光照和水温按实际浸入深度计算；25 厘米水深处的底饵仍属于浅水环境。
+		depthM := float64(c.depthCM) / 100
+		if c.measuredWaterDepthM > 0 {
+			depthM = math.Min(depthM, c.measuredWaterDepthM)
+		}
+		layer = normalizeWaterLayer(depthM / 5)
 	}
 	thermalResponse := .36 + .16*clampFloat(profile.Activity, .5, 1.5)
 	surface := seasonalAir + (air-seasonalAir)*thermalResponse + daylight*1.2

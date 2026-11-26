@@ -55,7 +55,7 @@ func TestFishEcologySeedsSpeciesAndMatchesWaterLayers(t *testing.T) {
 	// 冬季鲶鱼季节权重低，会把「底层更偏鲶鱼」这条断言带偏。
 	pike := srv.fishEcology(ctx, "n.pike")
 	catfish := srv.fishEcology(ctx, "w_catfish")
-	surface := fishRollContext{rigType: 1, depthCM: 50}
+	surface := fishRollContext{rigType: 1, depthCM: 50, measuredWaterDepthM: 5}
 	bottom := fishRollContext{rigType: 12, depthCM: 500}
 	pikeSurface := srv.fishLayerWeightProfile(pike, surface)
 	pikeBottom := srv.fishLayerWeightProfile(pike, bottom)
@@ -125,7 +125,7 @@ func TestEffectiveBaitDepthTracksFloatSinkingAndLureLayer(t *testing.T) {
 	if got := lureLayerFromMotion(0x400, .5, 0); got != .53 {
 		t.Fatalf("普通收线应仍按 +.03 变化，实得 %f", got)
 	}
-	if got := (&Server{}).rigWaterLayer(fishRollContext{rigType: 5, lureLayer: lureLayerFromMotion(0xD1000100, .5, 0)}); got > .2 {
+	if got, ok := (&Server{}).rigWaterLayer(fishRollContext{rigType: 5, lureLayer: lureLayerFromMotion(0xD1000100, .5, 0)}); !ok || got > .2 {
 		t.Fatalf("水面拟饵收线时水层应判水面，实得 %f", got)
 	}
 }
@@ -152,17 +152,12 @@ func TestLureLayerDiveClampAndRigWaterLayer(t *testing.T) {
 	}
 	srv := &Server{}
 	// 路亚无运动证据：按饵名义泳层兜底，不再一律中层 .5。
-	if got := srv.rigWaterLayer(fishRollContext{rigType: 5,
-		runtime: &fishRollRuntime{lureKnown: true, lure: lureAttributes{DiveDepth: .10}}}); got > .15 {
+	if got, ok := srv.rigWaterLayer(fishRollContext{rigType: 5,
+		runtime: &fishRollRuntime{lureKnown: true, lure: lureAttributes{DiveDepth: .10}}}); !ok || got > .15 {
 		t.Fatalf("水面系饵无运动证据应判表层，实得 %f", got)
 	}
-	if got := srv.rigWaterLayer(fishRollContext{rigType: 5}); got != .5 {
+	if got, ok := srv.rigWaterLayer(fishRollContext{rigType: 5}); !ok || got != .5 {
 		t.Fatalf("无饵证据时保持 .5 兜底，实得 %f", got)
-	}
-	// 浮钓水层保持 5m 满刻度（评审 P2-2：实际水深归一会让区域批量捕获
-	// 与逐点生产权重对不上，故统一回退到与 fishWaterConditionsFor 相同的旧口径）。
-	if got := srv.rigWaterLayer(fishRollContext{rigType: 1, depthCM: 300}); got != .6 {
-		t.Fatalf("浮钓应保持 5m 满刻度 .6，实得 %f", got)
 	}
 }
 
@@ -212,7 +207,7 @@ func TestFishLayerWeightProfileSymmetricDecay(t *testing.T) {
 	mk := func(lo, pref, hi float64) fishEcologyProfile {
 		return fishEcologyProfile{LayerMin: lo, LayerPref: pref, LayerMax: hi, Enabled: true}
 	}
-	// rigWaterLayer 口径：float 按 depthCM/500，路亚按 lureLayer，底层杆恒 .93。
+	// 浮钓用已知的落点水深，路亚按 lureLayer，底层杆恒 .93。
 	cases := []struct {
 		name string
 		p    fishEcologyProfile
@@ -220,8 +215,8 @@ func TestFishLayerWeightProfileSymmetricDecay(t *testing.T) {
 		flo  float64
 		fhi  float64
 	}{
-		{"区间内命中 pref 峰≈1", mk(.50, .70, .90), fishRollContext{rigType: 1, depthCM: 350}, .99, 1.001},
-		{"区间内偏离 pref 落地板 0.75", mk(.50, .70, .90), fishRollContext{rigType: 1, depthCM: 255}, .74, .76},
+		{"区间内命中 pref 峰≈1", mk(.50, .70, .90), fishRollContext{rigType: 1, depthCM: 350, measuredWaterDepthM: 5}, .99, 1.001},
+		{"区间内偏离 pref 落地板 0.75", mk(.50, .70, .90), fishRollContext{rigType: 1, depthCM: 255, measuredWaterDepthM: 5}, .74, .76},
 		{"水面饵打鲤鱼型（出界对称衰减）", mk(.32, .65, .77), fishRollContext{rigType: 5, lureLayer: .08}, .14, .22},
 		{"底钓打表层鱼（对称，保留杂口）", mk(.08, .20, .30), fishRollContext{rigType: 12}, .015, .04},
 		{"极端出界取 floor 0.02", mk(.52, .78, .96), fishRollContext{rigType: 5, lureLayer: .06}, .015, .03},
@@ -468,23 +463,43 @@ func TestCastPrepareClearsStaleLureStateOnNonLureRod(t *testing.T) {
 	}
 }
 
-// 评审 P2-2：浮钓水层口径必须与 fishWaterConditionsFor 一致，且不能按
-// spotEnv 实际水深归一——区域批量捕获没有点位 spotEnv，实际水深归一会让
-// 批量与逐点生产权重对不上（TestFishQueryRegionCaptureMatchesPointCalculation）。
-func TestFloatWaterLayerStaysFiveMeterScale(t *testing.T) {
-	at := time.Unix(worldDayEpochUnix+180*24*realSecPerGameHour+12*realSecPerGameHour, 0)
-	shallow := fishRollContext{rigType: 1, depthCM: 300,
-		spotEnv: fishSpotEnvironment{Known: true, DepthM: 10}, now: at}
-	legacy := shallow
-	legacy.spotEnv = fishSpotEnvironment{}
-	if got := (&Server{}).rigWaterLayer(shallow); got != .6 {
-		t.Fatalf("浮钓应保持 5m 满刻度 .6，实得 %f", got)
+func TestFloatWaterLayerUsesMeasuredColumn(t *testing.T) {
+	srv := &Server{}
+	for _, tc := range []struct {
+		waterM, want float64
+	}{{.30, .6}, {3, .06}, {.12, 1}} {
+		c := fishRollContext{rigType: 1, depthCM: 18, measuredWaterDepthM: tc.waterM}
+		if got, ok := srv.rigWaterLayer(c); !ok || math.Abs(got-tc.want) > 1e-9 {
+			t.Errorf("18cm in %gm of water: layer=%g want %g", tc.waterM, got, tc.want)
+		}
 	}
-	profile := fishEcologyProfile{Activity: 1, TempMinC: 5, TempPrefC: 17, TempMaxC: 27,
-		ClarityPref: .5, LightPref: .5}
-	wShallow := fishWaterConditionsFor(profile, shallow)
-	wLegacy := fishWaterConditionsFor(profile, legacy)
-	if wShallow.WaterTempC != wLegacy.WaterTempC || wShallow.Light != wLegacy.Light {
-		t.Fatalf("水温/光照不应因 spotEnv 实际水深变化: shallow=%+v legacy=%+v", wShallow, wLegacy)
+}
+
+func TestFloatEcologySkipsUnknownWaterLayer(t *testing.T) {
+	srv := &Server{}
+	p := defaultFishEcology("crucian")
+	for _, waterM := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		c := fishRollContext{rigType: 1, depthCM: 18, measuredWaterDepthM: waterM,
+			spotEnv: fishSpotEnvironment{Known: true, DepthM: 10}}
+		if got := srv.fishLayerWeightProfile(p, c); got != 1 {
+			t.Errorf("unknown water column %g: layer weight=%g want 1", waterM, got)
+		}
+	}
+}
+
+func TestFloatEcologyContinuousAtToleranceEdge(t *testing.T) {
+	srv := &Server{}
+	for _, tc := range []struct {
+		pref   float64
+		edgeCM int64
+	}{{.2, 60}, {.8, 440}} {
+		p := fishEcologyProfile{LayerMin: .2, LayerPref: tc.pref, LayerMax: .8}
+		c := fishRollContext{rigType: 1, measuredWaterDepthM: 5, depthCM: tc.edgeCM - 1}
+		left := srv.fishLayerWeightProfile(p, c)
+		c.depthCM += 2
+		right := srv.fishLayerWeightProfile(p, c)
+		if math.Abs(left-right) > .04 {
+			t.Errorf("weights jumped across %dcm edge: %g and %g", tc.edgeCM, left, right)
+		}
 	}
 }

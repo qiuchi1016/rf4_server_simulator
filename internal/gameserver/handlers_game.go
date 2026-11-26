@@ -812,18 +812,10 @@ func hCastPrepare(ctx *Ctx) ([]byte, bool) {
 	}
 	// 新竿/换钓组后的第一杆：先按实际竿行算 rigType 再做路亚族的重置与种子，
 	// 否则旧 st.RigType（0 或换钓组前的残留）会让第一杆丢种子（复审 P2）。
-	newRigType := st.RigType
-	var rodRow *store.Item
-	if row, err := srv.DB.GetItemByGUID(ctx.Sess.pushCtx(), gear); err == nil && row != nil {
-		rodRow = row
-		if row.Durability > 0 {
-			newRigType = srv.rigTypeOfItem(ctx.Sess.pushCtx(), row)
-		}
-	}
 	st.mu.Lock()
+	rodRow, tipRepaired, _ := srv.prepareCastRodLocked(ctx, st, gear)
 	st.GearGuid = gear
 	st.ReelSetting = reelSpeed
-	st.RigType = newRigType
 	// 新一杆无条件清上一杆拟饵状态：换竿/换饵/同竿换钓组后旧 LureDive 不得
 	// 钳制新饵，旧 LureLayer 不得压过 runtime DiveDepth 兜底，旧 LureAction/
 	// LureMotionMask/LureType 也不得漏进非路亚判鱼（评审 P1/P2-1）。
@@ -839,7 +831,7 @@ func hCastPrepare(ctx *Ctx) ([]byte, bool) {
 	st.LureStateAt = time.Time{}
 	st.LureLayerAt = time.Time{}
 	depthCM := st.DepthCM
-	rigType := newRigType
+	rigType := st.RigType
 	st.mu.Unlock()
 	if err := ctx.Sess.prepareBaitForCast(st, gear); err != nil {
 		ctx.Log.Warn("抛竿前补饵失败", "err", err)
@@ -858,9 +850,7 @@ func hCastPrepare(ctx *Ctx) ([]byte, bool) {
 		st.LureType = lureType
 		st.mu.Unlock()
 	}
-	// 收敛钓组数据：补齐 f5、rig 行、组件和尖梢。
-	// 尖梢有更新时推送 4/22 全量竿树，因为客户端抛竿前会校验实例 f8。
-	if srv.ensureRig(ctx.Sess.pushCtx(), ctx.Sess.Userid, gear) {
+	if tipRepaired {
 		ctx.Sess.Push4_22Full()
 	}
 	if rodRow != nil {
@@ -943,25 +933,16 @@ func hCast(ctx *Ctx) ([]byte, bool) {
 	castX, castZ, hasCastPos := castLandingPosition(ctx.Tree, st.Loc)
 	st.GearGuid = gear
 	st.CastPosX, st.CastPosZ, st.HasCastPos = castX, castZ, hasCastPos
+	row, _ := srv.DB.GetItemByGUID(ctx.Sess.pushCtx(), gear)
+	broken := row != nil && row.Durability <= 0
+	if broken {
+		st.GearGuid = ""
+	}
 	st.mu.Unlock()
-
-	// 记录钓组类型并读取当前钩上饵；路亚使用独立的咬钩节奏。
-	rigType := int64(0)
-	if row, err := srv.DB.GetItemByGUID(ctx.Sess.pushCtx(), gear); err == nil && row != nil {
-		if row.Durability <= 0 {
-			// 断竿不可抛投：耐久归零只能修理，17/7 拒取后客户端仍可能直发 14/2。
-			st.mu.Lock()
-			st.GearGuid = ""
-			st.mu.Unlock()
-			ctx.Log.Info("14/2 被拒：鱼竿已损坏", "rod", shortGUID(gear))
-			ctx.ReplyFailure("System.InvalidOperationException", "鱼竿已损坏，请先修理")
-			return nil, true
-		}
-		rt := srv.rigTypeOfItem(ctx.Sess.pushCtx(), row)
-		rigType = rt
-		st.mu.Lock()
-		st.RigType = rt
-		st.mu.Unlock()
+	if broken {
+		ctx.Log.Info("14/2 被拒：鱼竿已损坏", "rod", shortGUID(gear))
+		ctx.ReplyFailure("System.InvalidOperationException", "鱼竿已损坏，请先修理")
+		return nil, true
 	}
 	// 水域装备限制：竿或已装渔轮被当前地图禁用时不可抛投
 	// （17/7 已拦正常路径，这里兜底已装配好才切图的情况）。
@@ -987,7 +968,13 @@ func hCast(ctx *Ctx) ([]byte, bool) {
 		ctx.Log.Warn("抛竿前补饵失败", "err", err)
 		return nil, false
 	}
-	srv.ensureRig(ctx.Sess.pushCtx(), ctx.Sess.Userid, gear)
+	st.mu.Lock()
+	row, _, _ = srv.prepareCastRodLocked(ctx, st, gear)
+	rigType := int64(0)
+	if row != nil {
+		rigType = st.RigType
+	}
+	st.mu.Unlock()
 	// 14/1 给出的是满力度上限；14/2 才携带本次实际落点、动作和出手力度。
 	// 这里只做真实请求诊断，不能把本杆力度写回下一杆的上限。
 	requestedM := throwDistance(ctx.Tree)

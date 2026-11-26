@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -409,5 +411,66 @@ func TestPrepareFishRollRuntimeInlandHasNoChart(t *testing.T) {
 	}
 	if c.runtime.zoneKnown {
 		t.Fatal("内陆湖不该定位出海图区号")
+	}
+}
+
+func TestFishRollOnlyResolvesVerifiedLevelKeys(t *testing.T) {
+	s, _ := newStaticRigTestServer(t)
+	for loc, want := range map[string]string{
+		"loc1_03": "level_001_lake", "level_001_lake": "level_001_lake",
+		"": "", "unknown_scene": "", "level_invalid": "",
+	} {
+		if got := s.resolveRollLevelKey(t.Context(), loc); got != want {
+			t.Errorf("resolve %q = %q, want %q", loc, got, want)
+		}
+	}
+}
+
+func TestCastDepthSourceInRollAndQuery(t *testing.T) {
+	// Exercise the same once-loaded file as production in a fresh process.
+	if os.Getenv("RF4_TEST_DEPTH_LOOKUP_CHILD") == "" {
+		grid := castWaterDepthGrid{Version: 1, Level: "level_001_lake", X: 378, Z: 435, Step: 1,
+			Width: 2, Height: 2, Millimeters: []byte{232, 3, 232, 3, 232, 3, 232, 3}}
+		data, err := json.Marshal(grid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "depth.json")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("RF4_CAST_WATER_DEPTH_FILE", path)
+		t.Setenv("RF4_TEST_DEPTH_LOOKUP_CHILD", "1")
+		if output, err := exec.Command(os.Args[0], "-test.run=^TestCastDepthSourceInRollAndQuery$").CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s", err, output)
+		}
+		return
+	}
+	s, _ := newStaticRigTestServer(t)
+	c := fishRollContext{loc: "loc1_03", rigType: 1, x: 378.5, z: 435.5, hasPos: true}
+	for _, tc := range []struct {
+		name       string
+		playerOnly bool
+		query      *fishQueryCapture
+		want       float64
+	}{
+		{"cast", false, nil, 1}, {"manual query", false, &fishQueryCapture{}, 1},
+		{"region only", false, &fishQueryCapture{regional: true}, 0}, {"player position", true, nil, 0},
+	} {
+		c.playerPosOnly, c.query = tc.playerOnly, tc.query
+		s.prepareFishRollRuntime(t.Context(), &c, "")
+		if c.measuredWaterDepthM != tc.want {
+			t.Errorf("%s depth = %v, want %v", tc.name, c.measuredWaterDepthM, tc.want)
+		}
+	}
+}
+
+func TestFloatWaterConditionsStopAtBed(t *testing.T) {
+	p := defaultFishEcology("crucian")
+	c := fishRollContext{rigType: 1, depthCM: 25, measuredWaterDepthM: .25, now: time.Unix(worldDayEpochUnix, 0)}
+	atBed := fishWaterConditionsFor(p, c)
+	c.depthCM = 200
+	if got := fishWaterConditionsFor(p, c); got != atBed {
+		t.Errorf("adding line below the lake bed changed water conditions: %+v -> %+v", atBed, got)
 	}
 }

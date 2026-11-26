@@ -63,7 +63,7 @@ func TestPityLayerFloorButNotLureGate(t *testing.T) {
 	setBiteGateSwitch(t, s, "1")
 	cfg := s.biteGateConfig()
 	// 水层地板：目标层 0.1，frog 范围 0.9~1.0 → 超界。正常 ×0.01，pity ×0.05。
-	normal := fishRollContext{baits: []string{"rule_worm"}, now: time.Now(), rigType: 1, depthCM: 50}
+	normal := fishRollContext{baits: []string{"rule_worm"}, now: time.Now(), rigType: 1, depthCM: 50, measuredWaterDepthM: 5}
 	pity := normal
 	pity.pityEnv = true
 	kn, wn := s.applyBiteGates(s.dbCtx(), []string{"frog"}, []float64{100}, normal, cfg, "rules-test")

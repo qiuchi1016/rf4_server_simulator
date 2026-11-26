@@ -414,7 +414,7 @@ const TUNABLE_DEFS=[
   ['bait_pref_scale','饵效强度',1,'0=鱼不看饵；1=标准效果，按饵料偏好筛鱼'],
   ['bait_pref_weight_shift','饵效偏大体型',1,'越大越偏向个体大的鱼咬钩'],
   ['bite_gate_lure_diet_min','拟饵食性门槛',0.3,'硬性鱼口约束开启时，生态食性 lure 权重低于该值的鱼不攻拟饵（泥鳅0.20、鲤族0 被剔除；狗鱼2.07、江鳕0.63 保留）。范围 0~1'],
-  ['bite_gate_layer_floor','水层超界杂口',0.01,'硬性鱼口约束开启时，钓层落在鱼种栖息水层范围±0.15 之外时权重乘该系数；0=完全杜绝，0.01=保留约1%极小杂口'],
+  ['bite_gate_layer_floor','水层超界杂口',0.01,'浮钓按饵深占落点水深的比例判层。偏离栖息带越远权重越低，偏差达 0.30 时降到此倍率。落点水深未知时跳过。其他钓法超出 ±0.15 容差即用此倍率。'],
   ['bite_gate_diet_min','天然饵食性门槛',0.25,'双票生态票门槛：diet_json 对应食性权重≥该值算「生态认」。0.25 高于合成基线 0.2 噪声地板。范围 0~1'],
   ['bite_gate_diet_floor','单票小口系数',0.05,'攻略证据与生态食性只认一边时权重乘该系数；两边都不认或明确禁饵则整鱼剔除'],
   ['bite_empty_retry_scale','空轮重排倍率',1,'空轮（无符合条件的鱼）后下一轮等待时间的倍率：0.25=空轮 5 秒重试（正常 20 秒上限不变）；1=与正常咬钩同节奏'],
@@ -828,7 +828,7 @@ function renderBaitTable(){
           <div class="muted" style="font-size:11px;margin-top:6px">证据最强的饵：${esc((r.baits||[]).map(b=>`${b.bait_id}(T${b.tier}/${b.evidence})`).join(' · ')||'—')} ｜ 严格模式可咬：${r.in_strict?'是':'否'} · 规则来源：${r.source==='override'?'后台覆盖':'内置'}</div>
         </div>
         <div>
-          <b style="font-size:12px;color:#7a92aa">水层（G2 地板判定源 · 浅色带=±0.15 容差）</b>
+          <b style="font-size:12px;color:#7a92aa">活动水层（浅色带表示非浮钓的 ±0.15 容差）</b>
           <div style="margin-top:8px;position:relative;height:22px;border-radius:11px;background:#0a1521;overflow:hidden">
             <div style="position:absolute;left:${Math.max(0,(r.layer[0]-0.15)*100)}%;right:${Math.max(0,100-Math.min(1,r.layer[2]+0.15)*100)}%;top:3px;bottom:3px;background:#1b4f6f55;border-radius:8px"></div>
             <div style="position:absolute;left:${Math.max(0,r.layer[0]*100)}%;width:${Math.max(2,(Math.min(1,r.layer[2])-Math.max(0,r.layer[0]))*100)}%;top:3px;bottom:3px;background:linear-gradient(90deg,#2f7d5f,#2f7d9f);border-radius:8px"></div>
@@ -836,7 +836,7 @@ function renderBaitTable(){
             <span style="position:absolute;left:6px;top:4px;font-size:10px;color:#6f88a0">水面</span>
             <span style="position:absolute;right:6px;top:4px;font-size:10px;color:#6f88a0">水底</span>
           </div>
-          <div class="muted" style="font-size:11px;margin-top:4px">活动 ${(r.layer[0]||0).toFixed(2)}~${(r.layer[2]||0).toFixed(2)} · 偏好 ${(r.layer[1]||0).toFixed(2)}；钓层在容差带外权重×0.01（只剩极小杂口）</div>
+          <div class="muted" style="font-size:11px;margin-top:4px">活动 ${(r.layer[0]||0).toFixed(2)}~${(r.layer[2]||0).toFixed(2)} · 偏好 ${(r.layer[1]||0).toFixed(2)}。浮钓离开活动范围后逐渐降权，偏差达整列水深的 30% 时降至配置下限。</div>
           ${r.qual_g?`<div style="margin-top:10px"><b style="font-size:12px;color:#7a92aa">钩容量适配（物理计算，非实证）</b>
           <div class="muted" style="font-size:11.5px;margin-top:4px">合格档 <b style="color:var(--text)">${fmt(r.qual_g)}g</b> → 钩入口容量 <b style="color:var(--text)">${fmt(r.qual_g)}~${fmt(r.qual_g*4)}g</b> 全兼容${r.trophy_g?`；奖杯档 ${fmt(r.trophy_g)}g → ${fmt(r.trophy_g)}~${fmt(r.trophy_g*4)}g`:''}</div>
           <div class="muted" style="font-size:11px">在「钩子手感」页按入口容量对照；容量<鱼重掉保持率，>4×鱼重小口钩化</div></div>`:''}
@@ -1574,7 +1574,7 @@ async function resetStoreRow(i){
 }
 let FISH_AREAS=[];
 const FISH_RULE_SWITCHES={
-  gate:{key:'bite_gate_enabled',prefix:'biteGate',enabled:null,on:'硬性资格门：拟饵不再被非掠食鱼（泥鳅、鲤族）攻击；水层超界只保留约1%极小杂口。推荐与吃饵偏好/生态/天气/分布一起开启。',off:'不做硬性约束，任何鱼都可能咬任何饵（旧版手感）。'},
+  gate:{key:'bite_gate_enabled',prefix:'biteGate',enabled:null,on:'按食性筛选拟饵。浮钓落点水深已知时，饵离活动水层越远，该鱼权重越低。推荐与吃饵偏好/生态/天气/分布一起开启。',off:'不做硬性约束，任何鱼都可能咬任何饵（旧版手感）。'},
   ecology:{key:'fish_ecology_enabled',prefix:'fishEcology',enabled:null,on:'启用 252 种鱼的水层/昼夜/季节/天气/底质/拟饵动作等生态权重，影响吃口与候选鱼种。',off:'生态因子全部中性，不影响判鱼。'},
   weather:{key:'fish_weather_enabled',prefix:'fishWeather',enabled:null,on:'按游戏内温度、天气和鱼种习性影响吃口；底钓、浮钓会间歇试口。',off:'关闭天气鱼口修正，沿用原来的一次判鱼流程。'},
   distribution:{key:'fish_distribution_enabled',prefix:'fishDistribution',enabled:null,on:'按地图鱼种、所在区域和游戏昼夜变化鱼口，每四个游戏小时重新分布。',off:'沿用现有分布，各处水域可出鱼，不增加点位限制。'},

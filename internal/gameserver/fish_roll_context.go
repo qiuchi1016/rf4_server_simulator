@@ -38,6 +38,8 @@ type fishRollContext struct {
 	runtime    *fishRollRuntime
 	hook       gearPhysicsSpec
 	query      *fishQueryCapture
+	// measuredWaterDepthM 由饵落点的水面与地形高差得到，0 表示未知。
+	measuredWaterDepthM float64
 	// gateBlocked 由 rollFishWithRules 挂指针：硬性鱼口门把本图名册剔空时置位，
 	// 调用方据此跳过内置鱼池兜底——门拦下的杆就该空竿重排，不能从鱼池
 	// 捞出不属于本图的鱼。指针随值拷贝存活。
@@ -61,6 +63,7 @@ type fishRollRuntime struct {
 	lureKnown bool
 	// levelChecked 保证一次判鱼只解析一次地点与海图区号。
 	levelChecked bool
+	levelKey     string
 	// chartKnown 表示该地点有没有海图，zoneKnown 表示是否定位到声呐网格。
 	chartKnown bool
 	zone       int

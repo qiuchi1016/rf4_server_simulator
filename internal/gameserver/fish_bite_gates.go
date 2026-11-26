@@ -17,11 +17,9 @@ import (
 //     bite_gate_lure_diet_min 直接出候选。默认 0.30：泥鳅/鲫鱼 0.20~0.25、
 //     鲤族 0 不攻拟饵；狗鱼 2.07、江鳕 0.63、鲟族 0.30+（RF4 里 jig 钓鲟是
 //     真实玩法）照常。
-//   - G2 水层（软地板）：目标水层超出 [LayerMin−0.15, LayerMax+0.15] 时权重乘
-//     bite_gate_layer_floor（默认 0.01），不剔除——深水鱼偶尔在浅水被钓起是
-//     有意保留的极小杂口。0.15 容差用于减少底层杆在相邻水层间的误伤；当前
-//     生态表仍有上层/中层鱼 LayerMax < 0.78，底钓（目标 0.93）时它们会按设计
-//     落到地板。104 种底层鱼（鳗/七鳃鳗/鲟/庸鲽）会被水面拟饵（0.06+0.15）地板。
+//   - G2 水层：浮钓按饵深占实测水深的比例，离开栖息带后逐渐降至
+//     bite_gate_layer_floor（默认 0.01）；水深未知时跳过。其他钓法保留
+//     ±0.15 容差，超出后权重乘地板。
 //   - G-diet 天然饵双票（默认随门开启）：生态食性表 diet_json 首次参与咬口，
 //     与攻略证据（fishing_bait_rules.txt / companion_bait_fish / loc_bait_fish）
 //     合成双票，口径沿用窝料已验证的「双票打折」语义——
@@ -40,9 +38,7 @@ type biteGateConfig struct {
 	dietFloor   float64
 }
 
-// biteGateLayerTol 水层容差。与生态层 fishLayerWeightProfile 的拟饵向上追击
-// 容差（+.15）同口径，这里对两个方向统一用 0.15：浅滩浮钓（100cm→0.2）仍能
-// 钓到 LayerMin≈0.31 的鲤科鱼，而水面拟饵钓不到 LayerMin≥0.44 的底栖鱼。
+// biteGateLayerTol 是非浮钓的水层容差，也是浮钓错层过渡带的中点。
 const biteGateLayerTol = 0.15
 
 func (s *Server) biteGateConfig() biteGateConfig {
@@ -138,7 +134,11 @@ func (s *Server) applyBiteGates(ctx context.Context, keys []string, wts []float6
 		return keys, wts
 	}
 	baits := s.biteGateBaitSet(ctx, c)
-	target := s.rigWaterLayer(c)
+	target, layerKnown := s.rigWaterLayer(c)
+	floor := cfg.layerFloor
+	if c.pityEnv {
+		floor = math.Max(.05, floor)
+	}
 
 	// 天然饵双票的攻略侧材料：鱼名→规则、companion 档位、本地实证。
 	// 任一读取失败就跳过 G-diet（保持中性），G1/G2 照常。
@@ -178,14 +178,15 @@ func (s *Server) applyBiteGates(ctx context.Context, keys []string, wts []float6
 			wts[i] *= score
 		}
 		w := wts[i]
-		if target < p.LayerMin-biteGateLayerTol || target > p.LayerMax+biteGateLayerTol {
-			// 保底杂口（c.pityEnv）：地板抬到至少 0.05，让连续空杆的线能动；
-			// 食性类硬门（G1/G-diet）不受 pityEnv 影响。
-			floor := cfg.layerFloor
-			if c.pityEnv && floor < 0.05 {
-				floor = 0.05
+		if layerKnown {
+			if floatRigTypes[c.rigType] {
+				// 错层达 0.30 时到地板。两端斜率为零，容差两侧的相邻调漂值连续。
+				gap := math.Max(p.LayerMin-target, target-p.LayerMax)
+				t := clampFloat(1-gap/(2*biteGateLayerTol), 0, 1)
+				w *= floor + (1-floor)*t*t*(3-2*t)
+			} else if target < p.LayerMin-biteGateLayerTol || target > p.LayerMax+biteGateLayerTol {
+				w *= floor
 			}
-			w *= floor
 		}
 		outKeys = append(outKeys, key)
 		outWts = append(outWts, w)
